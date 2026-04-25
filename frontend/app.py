@@ -1,109 +1,118 @@
-import flet as ft
-import sqlite3
 import os
+import sqlite3
+from datetime import datetime, timedelta
+
+import webview
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, "metrics.db")
+INDEX_HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 
-def main(page: ft.Page):
-    page.title = "BrainCODE Dashboard"
-    page.theme_mode = ft.ThemeMode.DARK
-    page.padding = 40
-    page.window_width = 900
-    page.window_height = 700
-    
-    # Paleta de colores atractiva
-    PRIMARY_COLOR = "#6C63FF"
-    BG_COLOR = "#0F1015"
-    CARD_BG = "#1A1B23"
-    ACCENT_COLOR = "#FF6584"
-    
-    page.bgcolor = BG_COLOR
-    
-    # Animaciones
-    page.update()
-    
-    header = ft.Text(
-        "🧠 BrainCODE Analytics",
-        size=36,
-        weight=ft.FontWeight.BOLD,
-        color=PRIMARY_COLOR,
+CATEGORY_TO_STATE = {
+    "Productive": "working",
+    "Work": "working",
+    "Code": "working",
+    "Social Media": "social",
+    "Entertainment": "away",
+    "Idle": "absent",
+    "Unknown": "away",
+}
+
+
+def _connect():
+    return sqlite3.connect(DB_PATH)
+
+
+def _seconds_by_category(since: datetime):
+    if not os.path.exists(DB_PATH):
+        return {}
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT category, SUM(duration_seconds) FROM window_metrics "
+        "WHERE timestamp >= ? GROUP BY category",
+        (since.isoformat(sep=" "),),
     )
-    
-    subtitle = ft.Text(
-        "Monitorea tu productividad y concentración en tiempo real.",
-        size=16,
-        color=ft.Colors.WHITE70,
-        italic=True
-    )
-    
-    stats_text = ft.Text("Calculando métricas...", size=28, weight=ft.FontWeight.BOLD, color=ACCENT_COLOR)
-    
-    stats_card = ft.Container(
-        content=ft.Column([
-            ft.Text("Tiempo en Redes Sociales (Hoy)", size=18, weight=ft.FontWeight.W_500, color=ft.Colors.WHITE),
-            ft.Divider(color=ft.Colors.TRANSPARENT, height=10),
-            stats_text
-        ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-        bgcolor=CARD_BG,
-        padding=30,
-        border_radius=20,
-        shadow=ft.BoxShadow(spread_radius=2, blur_radius=15, color=ft.Colors.BLACK45, offset=ft.Offset(0, 5)),
-        width=400,
-        alignment=ft.Alignment.CENTER
-    )
+    rows = cur.fetchall()
+    conn.close()
+    return {cat or "Unknown": int(total or 0) for cat, total in rows}
 
-    def load_stats(e=None):
-        try:
-            if not os.path.exists(DB_PATH):
-                stats_text.value = "Esperando datos..."
-                page.update()
-                return
 
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("SELECT SUM(duration_seconds) FROM window_metrics WHERE category='Social Media'")
-            result = cursor.fetchone()[0]
-            conn.close()
-            
-            if result:
-                minutes = result // 60
-                seconds = result % 60
-                if minutes > 0:
-                    stats_text.value = f"{minutes} min {seconds} sec"
-                else:
-                    stats_text.value = f"{seconds} sec"
-            else:
-                stats_text.value = "0 sec (¡Perfecto!)"
-        except Exception as err:
-            stats_text.value = "Error al leer DB"
-            
-        page.update()
+class Api:
+    """Bridge exposed to JS as `window.pywebview.api`."""
 
-    refresh_btn = ft.ElevatedButton(
-        "Actualizar Métricas",
-        icon=ft.Icons.REFRESH,
-        color=ft.Colors.WHITE,
-        bgcolor=PRIMARY_COLOR,
-        on_click=load_stats,
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=10),
-            padding=ft.padding.all(15)
+    def get_today_metrics(self):
+        start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        by_cat = _seconds_by_category(start)
+
+        totals = {"working": 0, "away": 0, "social": 0, "absent": 0}
+        for cat, secs in by_cat.items():
+            state = CATEGORY_TO_STATE.get(cat, "away")
+            totals[state] += secs
+
+        total_secs = sum(totals.values())
+        active_secs = totals["working"]
+        score_pct = int(round(100 * active_secs / total_secs)) if total_secs else 0
+
+        return {
+            "score_pct": score_pct,
+            "active_minutes": active_secs // 60,
+            "totals_seconds": totals,
+            "raw_by_category": by_cat,
+            "has_data": total_secs > 0,
+        }
+
+    def get_hourly_breakdown(self):
+        if not os.path.exists(DB_PATH):
+            return []
+        start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT timestamp, category, duration_seconds FROM window_metrics "
+            "WHERE timestamp >= ?",
+            (start.isoformat(sep=" "),),
         )
-    )
+        rows = cur.fetchall()
+        conn.close()
 
-    page.add(
-        ft.Column([
-            header,
-            subtitle,
-            ft.Divider(height=40, color=ft.Colors.TRANSPARENT),
-            stats_card,
-            ft.Divider(height=30, color=ft.Colors.TRANSPARENT),
-            refresh_btn
-        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER)
+        buckets = {}
+        for ts, cat, dur in rows:
+            try:
+                dt = datetime.fromisoformat(ts)
+            except (TypeError, ValueError):
+                continue
+            hour = dt.hour
+            state = CATEGORY_TO_STATE.get(cat or "", "away")
+            buckets.setdefault(hour, {"working": 0, "away": 0, "social": 0, "absent": 0})
+            buckets[hour][state] += int(dur or 0)
+
+        out = []
+        for hour in sorted(buckets):
+            b = buckets[hour]
+            total = sum(b.values()) or 1
+            out.append({
+                "h": f"{hour}h",
+                "w": b["working"] / total,
+                "a": b["away"] / total,
+                "s": b["social"] / total,
+                "ab": b["absent"] / total,
+            })
+        return out
+
+
+def launch():
+    api = Api()
+    webview.create_window(
+        "BrainCode",
+        f"file://{INDEX_HTML}",
+        js_api=api,
+        width=940,
+        height=660,
+        resizable=True,
     )
-    
-    load_stats()
+    webview.start()
+
 
 if __name__ == "__main__":
-    ft.run(main=main)
+    launch()

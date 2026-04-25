@@ -1,4 +1,4 @@
-flet
+pywebview
 pygetwindow
 uiautomation
 opencv-python
