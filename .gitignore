@@ -77,3 +77,6 @@ metrics.db
 ehthumbs.db
 ehthumbs_vista.db
 [Tt]humbs.db
+
+# MediaPipe models
+*.task
