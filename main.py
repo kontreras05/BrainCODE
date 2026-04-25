@@ -25,4 +25,4 @@ if __name__ == "__main__":
     start_background_tasks()
     
     # Iniciar la interfaz Flet (esto bloquea el hilo principal)
-    ft.app(target=frontend_main)
+    ft.run(main=frontend_main)

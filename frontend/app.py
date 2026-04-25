@@ -33,7 +33,7 @@ def main(page: ft.Page):
     subtitle = ft.Text(
         "Monitorea tu productividad y concentración en tiempo real.",
         size=16,
-        color=ft.colors.WHITE70,
+        color=ft.Colors.WHITE70,
         italic=True
     )
     
@@ -41,16 +41,16 @@ def main(page: ft.Page):
     
     stats_card = ft.Container(
         content=ft.Column([
-            ft.Text("Tiempo en Redes Sociales (Hoy)", size=18, weight=ft.FontWeight.W_500, color=ft.colors.WHITE),
-            ft.Divider(color=ft.colors.TRANSPARENT, height=10),
+            ft.Text("Tiempo en Redes Sociales (Hoy)", size=18, weight=ft.FontWeight.W_500, color=ft.Colors.WHITE),
+            ft.Divider(color=ft.Colors.TRANSPARENT, height=10),
             stats_text
         ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
         bgcolor=CARD_BG,
         padding=30,
         border_radius=20,
-        shadow=ft.BoxShadow(spread_radius=2, blur_radius=15, color=ft.colors.BLACK45, offset=ft.Offset(0, 5)),
+        shadow=ft.BoxShadow(spread_radius=2, blur_radius=15, color=ft.Colors.BLACK45, offset=ft.Offset(0, 5)),
         width=400,
-        alignment=ft.alignment.center
+        alignment=ft.Alignment.CENTER
     )
 
     def load_stats(e=None):
@@ -82,8 +82,8 @@ def main(page: ft.Page):
 
     refresh_btn = ft.ElevatedButton(
         "Actualizar Métricas",
-        icon=ft.icons.REFRESH,
-        color=ft.colors.WHITE,
+        icon=ft.Icons.REFRESH,
+        color=ft.Colors.WHITE,
         bgcolor=PRIMARY_COLOR,
         on_click=load_stats,
         style=ft.ButtonStyle(
@@ -96,9 +96,9 @@ def main(page: ft.Page):
         ft.Column([
             header,
             subtitle,
-            ft.Divider(height=40, color=ft.colors.TRANSPARENT),
+            ft.Divider(height=40, color=ft.Colors.TRANSPARENT),
             stats_card,
-            ft.Divider(height=30, color=ft.colors.TRANSPARENT),
+            ft.Divider(height=30, color=ft.Colors.TRANSPARENT),
             refresh_btn
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER)
     )
@@ -106,4 +106,4 @@ def main(page: ft.Page):
     load_stats()
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.run(main=main)
