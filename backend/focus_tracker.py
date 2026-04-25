@@ -11,6 +11,24 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Dict, List
 from enum import Enum
+from collections import deque
+import concurrent.futures
+
+class CalibrationPhase(Enum):
+    WAITING_TO_START = 0
+    CENTER = 1
+    TOP_LEFT = 2
+    TOP_RIGHT = 3
+    BOTTOM_RIGHT = 4
+    BOTTOM_LEFT = 5
+    CALIBRATED = 6
+
+CORNER_PHASES = (
+    CalibrationPhase.TOP_LEFT,
+    CalibrationPhase.TOP_RIGHT,
+    CalibrationPhase.BOTTOM_RIGHT,
+    CalibrationPhase.BOTTOM_LEFT,
+)
 
 class OperationMode(Enum):
     DIGITAL = "DIGITAL"
@@ -32,14 +50,20 @@ class FocusState:
     def is_focused(self) -> bool:
         return self.state == ConcentrationState.FOCUSED
 
-# Descarga automática del modelo de MediaPipe
+# Descargas automáticas de modelos de MediaPipe
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "face_landmarker.task")
 
-def download_model():
+GESTURE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task"
+GESTURE_MODEL_PATH = os.path.join(os.path.dirname(__file__), "gesture_recognizer.task")
+
+def download_models():
     if not os.path.exists(MODEL_PATH):
         print(f"Descargando modelo face_landmarker.task (se hace solo una vez)...")
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+    if not os.path.exists(GESTURE_MODEL_PATH):
+        print(f"Descargando modelo gesture_recognizer.task (se hace solo una vez)...")
+        urllib.request.urlretrieve(GESTURE_MODEL_URL, GESTURE_MODEL_PATH)
 
 class FocusTracker:
     def __init__(
@@ -65,6 +89,7 @@ class FocusTracker:
         self._state_lock = threading.Lock()
         self._current_state = FocusState()
         self._last_frame = None
+        self._last_valid_landmarks = []
         
         # State Confirmation System
         self._current_confirmed_state = ConcentrationState.FOCUSED
@@ -84,16 +109,28 @@ class FocusTracker:
         self._longest_focus_streak = 0.0
         self._distraction_events = []
         
-        download_model()
+        download_models()
         
-        base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
-        options = vision.FaceLandmarkerOptions(
-            base_options=base_options,
+        # --- Face Landmarker ---
+        base_options_face = python.BaseOptions(model_asset_path=MODEL_PATH)
+        options_face = vision.FaceLandmarkerOptions(
+            base_options=base_options_face,
             output_face_blendshapes=True,
             output_facial_transformation_matrixes=True,
             num_faces=1
         )
-        self.detector = vision.FaceLandmarker.create_from_options(options)
+        self.detector = vision.FaceLandmarker.create_from_options(options_face)
+        
+        # --- Gesture Recognizer ---
+        base_options_gesture = python.BaseOptions(model_asset_path=GESTURE_MODEL_PATH)
+        options_gesture = vision.GestureRecognizerOptions(
+            base_options=base_options_gesture,
+            num_hands=2
+        )
+        self.gesture_recognizer = vision.GestureRecognizer.create_from_options(options_gesture)
+        
+        # --- Concurrency ---
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         
         self._last_yaw = 0
         self._last_pitch = 0
@@ -103,14 +140,71 @@ class FocusTracker:
         self._eyes_closed_since = None
         self._blink_min_duration = 0.5  # seconds — normal blink is ~200ms
         
-        # Gaze calibration using blendshapes
-        self._gaze_calibrated = False
+        # --- Gesture Tracking State ---
+        self._last_gesture_by_hand = {}  # {hand_id: (gesture_name, timestamp)}
+        self._hand_x_history = {}        # {hand_id: deque(timestamps, x_positions)}
+        self._clap_events = []           # timestamps of claps
+        self._last_hands_dist = 1.0
+        self._detected_gestures = set()  # To avoid spamming, store gestures here briefly
+        
+        # =====================================================
+        # GUIDED 5-PHASE CALIBRATION SYSTEM
+        # =====================================================
+        self.calibration_phase = CalibrationPhase.WAITING_TO_START
+
+        self._calib_frames_center = 60   # ~2s look center
+        self._calib_frames_corner = 45   # ~1.5s per corner (4 corners = 6s total)
+
+        self._calib_samples_center_gaze = []
+        self._calib_samples_center_head = []
+        self._calib_samples_center_blink = []
+        self._calib_samples_center_face_ratio = []
+        self._calib_samples_corners = {p: [] for p in CORNER_PHASES}
+
         self._gaze_baseline_h = 0.0
         self._gaze_baseline_v = 0.0
-        self._gaze_calibration_samples = []
-        self._gaze_calibration_frames = 60  # ~2 seconds at 30fps
-        self._gaze_threshold_h = 0.15  # horizontal deadzone
-        self._gaze_threshold_v = 0.20  # vertical deadzone (more forgiving)
+        self._head_baseline_yaw = 0.0
+        self._head_baseline_pitch = 0.0
+        # Posture reference: face width / frame width when user sat naturally during CENTER
+        self._face_ratio_baseline = 0.0
+        # Drift tolerance vs baseline before warning (e.g. 0.30 → ±30%)
+        self._posture_drift_tolerance = 0.30
+        # Sustained-drift tracking → triggers a recalibration suggestion
+        self._drift_warning_since: Optional[float] = None
+        self._drift_persist_threshold = 10.0  # seconds of continuous drift
+
+        # Asymmetric gaze thresholds (one per direction)
+        self._gaze_threshold_left = 0.15
+        self._gaze_threshold_right = 0.15
+        self._gaze_threshold_up = 0.20
+        self._gaze_threshold_down = 0.20
+        self._gaze_min_threshold_h = 0.08
+        self._gaze_min_threshold_v = 0.10
+
+        self._head_yaw_threshold = 25
+        self._head_pitch_up_threshold = 20
+        self._head_pitch_down_threshold = 35
+
+        # Calibrated blink threshold (per-user; some users have heavier eyelids)
+        self._blink_threshold = 0.5
+
+        # Environment hints (lighting / face distance) — exposed to UI during WAITING
+        self._environment_status = {
+            "brightness": 0.0,
+            "face_ratio": 0.0,
+            "drift_pct": 0.0,
+            "warning": None,
+        }
+        
+        # --- Temporal smoothing for gaze (moving average) ---
+        self._gaze_history_size = 5
+        self._gaze_h_history = deque(maxlen=self._gaze_history_size)
+        self._gaze_v_history = deque(maxlen=self._gaze_history_size)
+        
+        # --- Gaze voting system: require N of last M frames off-screen ---
+        self._gaze_vote_window = 8   # look at last M frames
+        self._gaze_vote_threshold = 5  # require N frames to be "off"
+        self._gaze_vote_buffer = deque(maxlen=self._gaze_vote_window)
 
     def start(self):
         if self.is_running:
@@ -126,26 +220,79 @@ class FocusTracker:
         self._candidate_since = now
         
         # Reset calibration for new session
-        self._gaze_calibrated = False
-        self._gaze_calibration_samples = []
+        self.calibration_phase = CalibrationPhase.WAITING_TO_START
+        self._calib_samples_center_gaze.clear()
+        self._calib_samples_center_head.clear()
+        self._calib_samples_center_blink.clear()
+        self._calib_samples_center_face_ratio.clear()
+        self._face_ratio_baseline = 0.0
+        self._drift_warning_since = None
+        for buf in self._calib_samples_corners.values():
+            buf.clear()
+        self._gaze_h_history.clear()
+        self._gaze_v_history.clear()
+        self._gaze_vote_buffer.clear()
         
         self._thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self._thread.start()
 
-    def calibrate_gaze(self, h_ratio: float, v_ratio: float):
-        """Manually set the gaze baseline (center position when looking at screen)."""
-        self._gaze_baseline_h = h_ratio
-        self._gaze_baseline_v = v_ratio
-        self._gaze_calibrated = True
+    def start_calibration(self):
+        """Manually trigger the calibration process."""
+        if self.calibration_phase == CalibrationPhase.WAITING_TO_START:
+            self.calibration_phase = CalibrationPhase.CENTER
 
     @property
-    def is_gaze_calibrated(self) -> bool:
-        return self._gaze_calibrated
+    def is_fully_calibrated(self) -> bool:
+        return self.calibration_phase == CalibrationPhase.CALIBRATED
+
+    @property
+    def calibration_progress(self) -> float:
+        """Returns calibration progress from 0.0 to 1.0."""
+        if self.calibration_phase == CalibrationPhase.WAITING_TO_START:
+            return 0.0
+        if self.calibration_phase == CalibrationPhase.CALIBRATED:
+            return 1.0
+        if self.calibration_phase == CalibrationPhase.CENTER:
+            return (len(self._calib_samples_center_gaze) / self._calib_frames_center) * 0.2
+        if self.calibration_phase in CORNER_PHASES:
+            idx = CORNER_PHASES.index(self.calibration_phase)
+            in_phase = len(self._calib_samples_corners[self.calibration_phase]) / self._calib_frames_corner
+            return 0.2 + (idx + min(in_phase, 1.0)) * 0.2
+        return 0.0
+
+    @property
+    def environment_status(self) -> Dict:
+        """Lighting / face distance hints. Useful while WAITING_TO_START."""
+        return dict(self._environment_status)
+
+    @property
+    def recalibration_suggested(self) -> bool:
+        """True if posture drift has persisted long enough to recommend recalibrating."""
+        if self._drift_warning_since is None:
+            return False
+        return (time.time() - self._drift_warning_since) >= self._drift_persist_threshold
+
+    def request_recalibration(self):
+        """Reset to WAITING_TO_START so the user can adopt their (new) natural posture."""
+        self.calibration_phase = CalibrationPhase.WAITING_TO_START
+        self._calib_samples_center_gaze.clear()
+        self._calib_samples_center_head.clear()
+        self._calib_samples_center_blink.clear()
+        self._calib_samples_center_face_ratio.clear()
+        for buf in self._calib_samples_corners.values():
+            buf.clear()
+        self._face_ratio_baseline = 0.0
+        self._drift_warning_since = None
+        self._gaze_h_history.clear()
+        self._gaze_v_history.clear()
+        self._gaze_vote_buffer.clear()
 
     def stop(self):
         self.is_running = False
         if self._thread:
             self._thread.join()
+        if hasattr(self, '_executor'):
+            self._executor.shutdown(wait=False)
 
     def get_current_state(self) -> FocusState:
         with self._state_lock:
@@ -156,6 +303,13 @@ class FocusTracker:
             if self._last_frame is not None:
                 return self._last_frame.copy()
             return None
+
+    def get_frame_and_state(self):
+        """Return frame and state atomically to prevent desync flicker."""
+        with self._state_lock:
+            frame = self._last_frame.copy() if self._last_frame is not None else None
+            state = self._current_state
+        return frame, state
 
     def end_session(self) -> Dict:
         self.stop()
@@ -174,24 +328,38 @@ class FocusTracker:
         while self.is_running and cap.isOpened():
             success, image = cap.read()
             if not success:
-                self._update_candidate(ConcentrationState.NOT_PRESENT, "camera_error", {})
+                self._update_candidate(ConcentrationState.NOT_PRESENT, "camera_error", {}, None)
                 time.sleep(0.1)
                 continue
-                
-            with self._state_lock:
-                self._last_frame = image.copy()
 
             img_h, img_w, _ = image.shape
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
-            detection_result = self.detector.detect(mp_image)
+            
+            # --- PARALLEL RECOGNITION ---
+            # Run both heavy ML models in parallel to prevent frame rate drops (race condition fix)
+            future_face = self._executor.submit(self.detector.detect, mp_image)
+            future_gesture = self._executor.submit(self.gesture_recognizer.recognize, mp_image)
+            
+            detection_result = future_face.result()
+            gesture_result = future_gesture.result()
+            
+            # --- GESTURE PROCESSING ---
+            current_time = time.time()
+            self._process_gestures(gesture_result, current_time)
             
             raw_data = {"yaw": 0, "pitch": 0, "roll": 0, "ear": 0, "gaze": "center"}
+            if self._detected_gestures:
+                raw_data["gestures"] = list(self._detected_gestures)
+                # Optionally print them for debug or pass to UI
+                for g in self._detected_gestures:
+                    print(f"[GESTURE DETECTED] {g}")
+                self._detected_gestures.clear()
             
             # PASO 1 - Rostro detectado
             if not detection_result.face_landmarks:
-                self._update_candidate(ConcentrationState.NOT_PRESENT, "no_face_detected", raw_data)
+                self._update_candidate(ConcentrationState.NOT_PRESENT, "no_face_detected", raw_data, image)
                 continue
                 
             face_landmarks = detection_result.face_landmarks[0]
@@ -200,6 +368,7 @@ class FocusTracker:
             blendshape_dict = {}
             is_eyes_closed = False
             blink_score = 0.0
+            eyes_currently_closed_raw = False
             if detection_result.face_blendshapes:
                 blendshapes = detection_result.face_blendshapes[0]
                 blendshape_dict = {x.category_name: x.score for x in blendshapes}
@@ -207,8 +376,10 @@ class FocusTracker:
                 blink_r = blendshape_dict.get("eyeBlinkRight", 0)
                 blink_score = max(blink_l, blink_r)
                 
+                eyes_currently_closed_raw = blink_l > self._blink_threshold and blink_r > self._blink_threshold
+                
                 # Blink duration filter: only mark eyes_closed if closed > 0.5s
-                if blink_l > 0.5 and blink_r > 0.5:
+                if eyes_currently_closed_raw:
                     if self._eyes_closed_since is None:
                         self._eyes_closed_since = time.time()
                     elif time.time() - self._eyes_closed_since > self._blink_min_duration:
@@ -241,26 +412,96 @@ class FocusTracker:
             # Exportar coordenadas para overlays (UI / Frontend)
             raw_data["landmarks_2d"] = [(int(lm.x * img_w), int(lm.y * img_h)) for lm in face_landmarks]
             
-            # Gaze — using ARKit eyeLook blendshapes (much more precise than iris landmarks)
-            gaze_status, gaze_h, gaze_v = self._estimate_gaze(blendshape_dict)
+            # Raw Gaze — using ARKit eyeLook blendshapes
+            gaze_h, gaze_v = self._compute_raw_gaze(blendshape_dict)
+            
+            # --- TEMPORAL SMOOTHING ---
+            self._gaze_h_history.append(gaze_h)
+            self._gaze_v_history.append(gaze_v)
+            smoothed_h = sum(self._gaze_h_history) / len(self._gaze_h_history) if self._gaze_h_history else 0.0
+            smoothed_v = sum(self._gaze_v_history) / len(self._gaze_v_history) if self._gaze_v_history else 0.0
+            
+            raw_data["gaze_x"] = smoothed_h
+            raw_data["gaze_y"] = smoothed_v
+            
+            # Environment hints run every frame: pre-cal uses absolute extremes,
+            # post-cal compares against the user's natural-posture baseline.
+            self._update_environment_status(image, face_landmarks, img_w, img_h)
+
+            # --- CALIBRATION LOGIC ---
+            if self.calibration_phase != CalibrationPhase.CALIBRATED:
+                if self.calibration_phase == CalibrationPhase.WAITING_TO_START:
+                    # Don't sample anything — wait for user to press Space/Enter
+                    raw_data["gaze"] = "center"
+                    self._update_candidate(ConcentrationState.FOCUSED, None, raw_data, image)
+                    time.sleep(0.03)
+                    continue
+
+                if not eyes_currently_closed_raw:
+                    if self.calibration_phase == CalibrationPhase.CENTER:
+                        self._calib_samples_center_gaze.append((smoothed_h, smoothed_v))
+                        self._calib_samples_center_head.append((yaw, pitch))
+                        self._calib_samples_center_blink.append(blink_score)
+                        self._calib_samples_center_face_ratio.append(self._environment_status["face_ratio"])
+                        if len(self._calib_samples_center_gaze) >= self._calib_frames_center:
+                            self._compute_center_baselines()
+                            self.calibration_phase = CalibrationPhase.TOP_LEFT
+
+                    elif self.calibration_phase in CORNER_PHASES:
+                        self._calib_samples_corners[self.calibration_phase].append((smoothed_h, smoothed_v))
+                        if len(self._calib_samples_corners[self.calibration_phase]) >= self._calib_frames_corner:
+                            self._advance_corner_phase()
+
+                raw_data["gaze"] = "center"
+                self._update_candidate(ConcentrationState.FOCUSED, None, raw_data, image)
+                time.sleep(0.03)
+                continue
+            
+            # --- POST-CALIBRATION: Deviation from baseline ---
+            dev_h = smoothed_h - self._gaze_baseline_h
+            dev_v = smoothed_v - self._gaze_baseline_v
+            
+            # Determine per-frame gaze status (asymmetric thresholds per direction)
+            is_off = False
+            if dev_h > self._gaze_threshold_right:
+                frame_status = "gaze_off_screen_right"
+                is_off = True
+            elif dev_h < -self._gaze_threshold_left:
+                frame_status = "gaze_off_screen_left"
+                is_off = True
+            elif dev_v < -self._gaze_threshold_up:
+                frame_status = "gaze_off_screen_up"
+                is_off = True
+            elif dev_v > self._gaze_threshold_down:
+                frame_status = "gaze_off_screen_down"
+                is_off = True
+            else:
+                frame_status = "center"
+            
+            # Voting system
+            self._gaze_vote_buffer.append(is_off)
+            off_count = sum(self._gaze_vote_buffer)
+            gaze_status = frame_status if off_count >= self._gaze_vote_threshold else "center"
             raw_data["gaze"] = gaze_status
-            raw_data["gaze_x"] = gaze_h
-            raw_data["gaze_y"] = gaze_v
             
             # PASO 2 - Reglas del estado (jerarquía de prioridad)
             candidate = ConcentrationState.FOCUSED
             reason = None
             
+            # Use calibrated head pose baselines
+            rel_yaw = abs(yaw - self._head_baseline_yaw)
+            rel_pitch_raw = pitch - self._head_baseline_pitch
+            
             if is_eyes_closed:
                 candidate = ConcentrationState.DISTRACTED
                 reason = "eyes_closed"
-            elif abs(yaw) > 25:
+            elif rel_yaw > self._head_yaw_threshold:
                 candidate = ConcentrationState.DISTRACTED
                 reason = "head_turned_side"
-            elif pitch < -20:
+            elif rel_pitch_raw < -self._head_pitch_up_threshold:
                 candidate = ConcentrationState.DISTRACTED
                 reason = "head_turned_up"
-            elif pitch > 35:
+            elif rel_pitch_raw > self._head_pitch_down_threshold:
                 if self.mode == OperationMode.DIGITAL:
                     candidate = ConcentrationState.DISTRACTED
                     reason = "head_turned_down"
@@ -271,12 +512,220 @@ class FocusTracker:
                 candidate = ConcentrationState.DISTRACTED
                 reason = "gaze_off_screen"
                 
-            self._update_candidate(candidate, reason, raw_data)
+            self._update_candidate(candidate, reason, raw_data, image)
             time.sleep(0.03)
             
         cap.release()
 
-    def _update_candidate(self, candidate: ConcentrationState, reason: str, raw_data: Dict):
+    def _process_gestures(self, result, current_time):
+        num_hands = len(result.hand_landmarks) if result.hand_landmarks else 0
+        hands_data = []
+
+        if num_hands > 0:
+            for i, (gestures_list, landmarks) in enumerate(zip(result.gestures, result.hand_landmarks)):
+                top_gesture = max(gestures_list, key=lambda g: g.score).category_name if gestures_list else "None"
+                
+                cx = sum([lm.x for lm in landmarks]) / len(landmarks)
+                cy = sum([lm.y for lm in landmarks]) / len(landmarks)
+                hands_data.append({"id": i, "gesture": top_gesture, "cx": cx, "cy": cy})
+                
+                # Check open palm to fist transition
+                last_g, last_g_time = self._last_gesture_by_hand.get(i, (None, 0))
+                if top_gesture == "Closed_Fist" and last_g == "Open_Palm":
+                    if current_time - last_g_time < 1.0: # transition within 1 second
+                        self._detected_gestures.add("PALMA_A_PUNO")
+                
+                if top_gesture != "None":
+                    self._last_gesture_by_hand[i] = (top_gesture, current_time)
+
+        # Clap detection (Una palmada) - Simplified Logic
+        if not hasattr(self, '_hands_are_close'):
+            self._hands_are_close = False
+            self._last_clap_time = 0.0
+
+        current_dist = 1.0
+        if num_hands == 2:
+            dx = hands_data[0]["cx"] - hands_data[1]["cx"]
+            dy = hands_data[0]["cy"] - hands_data[1]["cy"]
+            current_dist = math.sqrt(dx*dx + dy*dy)
+
+            if current_dist < 0.15:
+                if not self._hands_are_close:
+                    self._hands_are_close = True
+                    self._register_clap(current_time)
+            elif current_dist > 0.20:
+                self._hands_are_close = False
+                
+            self._last_hands_dist = current_dist
+        elif num_hands < 2:
+            # MediaPipe often loses one hand right at the impact of a clap because they overlap
+            if getattr(self, '_last_hands_dist', 1.0) < 0.25:
+                if not getattr(self, '_hands_are_close', False):
+                    self._hands_are_close = True
+                    self._register_clap(current_time)
+            
+            # Reset states if no hands are visible so it doesn't get stuck
+            if num_hands == 0:
+                self._hands_are_close = False
+                self._last_hands_dist = 1.0
+
+    def _register_clap(self, current_time):
+        # Debounce: ignore claps that happen within 1.0s of each other to avoid spamming
+        if current_time - self._last_clap_time > 1.0:
+            self._detected_gestures.add("UNA_PALMADA")
+            self._last_clap_time = current_time
+
+    def _compute_raw_gaze(self, blendshape_dict: Dict):
+        if not blendshape_dict:
+            return 0.0, 0.0
+        
+        look_left = (blendshape_dict.get("eyeLookOutLeft", 0) + blendshape_dict.get("eyeLookInRight", 0)) / 2.0
+        look_right = (blendshape_dict.get("eyeLookOutRight", 0) + blendshape_dict.get("eyeLookInLeft", 0)) / 2.0
+        look_up = (blendshape_dict.get("eyeLookUpLeft", 0) + blendshape_dict.get("eyeLookUpRight", 0)) / 2.0
+        look_down = (blendshape_dict.get("eyeLookDownLeft", 0) + blendshape_dict.get("eyeLookDownRight", 0)) / 2.0
+        
+        gaze_h = look_right - look_left
+        gaze_v = look_down - look_up
+        return gaze_h, gaze_v
+
+    def _compute_center_baselines(self):
+        """After CENTER phase: gaze/head baselines + per-user blink threshold."""
+        h_clean = self._reject_outliers_iqr([s[0] for s in self._calib_samples_center_gaze])
+        v_clean = self._reject_outliers_iqr([s[1] for s in self._calib_samples_center_gaze])
+        yaw_clean = self._reject_outliers_iqr([s[0] for s in self._calib_samples_center_head])
+        pitch_clean = self._reject_outliers_iqr([s[1] for s in self._calib_samples_center_head])
+
+        self._gaze_baseline_h = float(np.median(h_clean)) if h_clean else 0.0
+        self._gaze_baseline_v = float(np.median(v_clean)) if v_clean else 0.0
+        self._head_baseline_yaw = float(np.median(yaw_clean)) if yaw_clean else 0.0
+        self._head_baseline_pitch = float(np.median(pitch_clean)) if pitch_clean else 0.0
+
+        # Blink threshold: capture the user's natural eyes-open blink_score ceiling
+        # so heavier eyelids don't trigger eyes_closed false positives.
+        blink_clean = self._reject_outliers_iqr(self._calib_samples_center_blink)
+        if blink_clean:
+            p95_open = float(np.percentile(blink_clean, 95))
+            self._blink_threshold = max(0.5, min(0.85, p95_open + 0.15))
+
+        # Posture baseline: face width / frame width in the user's natural working pose.
+        # Future drift warnings are relative to this, not to a hardcoded "standard distance".
+        face_ratio_clean = self._reject_outliers_iqr(self._calib_samples_center_face_ratio)
+        self._face_ratio_baseline = float(np.median(face_ratio_clean)) if face_ratio_clean else 0.0
+
+        print(f"[CALIB] Gaze baseline: H={self._gaze_baseline_h:+.3f} V={self._gaze_baseline_v:+.3f}")
+        print(f"[CALIB] Head baseline: Yaw={self._head_baseline_yaw:+.1f}° Pitch={self._head_baseline_pitch:+.1f}°")
+        print(f"[CALIB] Blink threshold: {self._blink_threshold:.3f}")
+        print(f"[CALIB] Posture baseline (face ratio): {self._face_ratio_baseline:.3f}")
+
+    def _advance_corner_phase(self):
+        """Move to next corner, or finalize if BOTTOM_LEFT just finished."""
+        idx = CORNER_PHASES.index(self.calibration_phase)
+        if idx + 1 < len(CORNER_PHASES):
+            self.calibration_phase = CORNER_PHASES[idx + 1]
+        else:
+            self._finalize_calibration()
+            self.calibration_phase = CalibrationPhase.CALIBRATED
+
+    def _finalize_calibration(self):
+        """Compute asymmetric directional thresholds from the 4 corner phases."""
+        tl = self._calib_samples_corners[CalibrationPhase.TOP_LEFT]
+        tr = self._calib_samples_corners[CalibrationPhase.TOP_RIGHT]
+        br = self._calib_samples_corners[CalibrationPhase.BOTTOM_RIGHT]
+        bl = self._calib_samples_corners[CalibrationPhase.BOTTOM_LEFT]
+
+        # gaze_h convention: negative = looking left, positive = looking right
+        # gaze_v convention: negative = looking up, positive = looking down
+        left_devs = self._reject_outliers_iqr([self._gaze_baseline_h - s[0] for s in (tl + bl)])
+        right_devs = self._reject_outliers_iqr([s[0] - self._gaze_baseline_h for s in (tr + br)])
+        up_devs = self._reject_outliers_iqr([self._gaze_baseline_v - s[1] for s in (tl + tr)])
+        down_devs = self._reject_outliers_iqr([s[1] - self._gaze_baseline_v for s in (bl + br)])
+
+        self._gaze_threshold_left = max(self._gaze_min_threshold_h,
+                                        float(np.percentile(left_devs, 95))) if left_devs else self._gaze_min_threshold_h
+        self._gaze_threshold_right = max(self._gaze_min_threshold_h,
+                                         float(np.percentile(right_devs, 95))) if right_devs else self._gaze_min_threshold_h
+        self._gaze_threshold_up = max(self._gaze_min_threshold_v,
+                                      float(np.percentile(up_devs, 95))) if up_devs else self._gaze_min_threshold_v
+        self._gaze_threshold_down = max(self._gaze_min_threshold_v,
+                                        float(np.percentile(down_devs, 95))) if down_devs else self._gaze_min_threshold_v
+
+        print(f"[CALIB] Asymmetric thresholds — "
+              f"L={self._gaze_threshold_left:.3f} R={self._gaze_threshold_right:.3f} "
+              f"U={self._gaze_threshold_up:.3f} D={self._gaze_threshold_down:.3f}")
+
+    def _update_environment_status(self, image, face_landmarks, img_w: int, img_h: int):
+        """Lighting / posture hints. Pure data — UI consumes via property.
+
+        Pre-calibration: only flags extreme cases (no rigid "standard distance"),
+        so the user can adopt their own working posture before calibration.
+        Post-calibration: distance warnings are relative to the user's own
+        face_ratio baseline captured during the CENTER phase.
+        """
+        xs = [lm.x for lm in face_landmarks]
+        ys = [lm.y for lm in face_landmarks]
+        face_ratio = max(xs) - min(xs)  # face width relative to frame
+
+        x1 = max(0, int(min(xs) * img_w))
+        x2 = min(img_w, int(max(xs) * img_w))
+        y1 = max(0, int(min(ys) * img_h))
+        y2 = min(img_h, int(max(ys) * img_h))
+
+        brightness = 128.0
+        if x2 > x1 and y2 > y1:
+            face_region = image[y1:y2, x1:x2]
+            if face_region.size > 0:
+                gray = cv2.cvtColor(face_region, cv2.COLOR_BGR2GRAY)
+                brightness = float(np.mean(gray))
+
+        warning = None
+        drift_pct = 0.0
+
+        # Lighting check applies always — bad light breaks blendshapes regardless of posture.
+        if brightness < 60:
+            warning = "too_dark"
+        elif self._face_ratio_baseline > 1e-6:
+            # Post-calibration: drift relative to the user's own natural posture.
+            drift_pct = (face_ratio - self._face_ratio_baseline) / self._face_ratio_baseline
+            if drift_pct > self._posture_drift_tolerance:
+                warning = "moved_closer"
+            elif drift_pct < -self._posture_drift_tolerance:
+                warning = "moved_further"
+        else:
+            # Pre-calibration: only catch genuinely unworkable extremes.
+            if face_ratio < 0.08:
+                warning = "barely_visible"
+
+        # Track sustained drift (post-cal only) to suggest recalibration after N seconds.
+        is_drifting = (
+            self._face_ratio_baseline > 1e-6
+            and abs(drift_pct) > self._posture_drift_tolerance
+        )
+        if is_drifting:
+            if self._drift_warning_since is None:
+                self._drift_warning_since = time.time()
+        else:
+            self._drift_warning_since = None
+
+        self._environment_status = {
+            "brightness": brightness,
+            "face_ratio": face_ratio,
+            "drift_pct": drift_pct,
+            "warning": warning,
+        }
+
+    def _reject_outliers_iqr(self, data: List[float]) -> List[float]:
+        """Remove outliers using the IQR method (1.5x IQR rule)."""
+        if len(data) < 4:
+            return data
+        arr = np.array(data)
+        q1 = np.percentile(arr, 25)
+        q3 = np.percentile(arr, 75)
+        iqr = q3 - q1
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+        return [x for x in data if lower <= x <= upper]
+
+    def _update_candidate(self, candidate: ConcentrationState, reason: str, raw_data: Dict, frame=None):
         current_time = time.time()
         
         # Actualizar analíticas de tiempo
@@ -304,18 +753,14 @@ class FocusTracker:
             up_rate = (100.0 / self.pomodoro_duration) * speed 
             self._score = min(100.0, self._score + (up_rate * score_delta_t))
         elif self._current_confirmed_state == ConcentrationState.DISTRACTED:
-            # Penaliza restando todo el score relativo a un 100% en 1/4 del tiempo de pomodoro
             down_rate = 100.0 / (self.pomodoro_duration / 4) 
             self._score = max(0.0, self._score - (down_rate * score_delta_t))
-        # NOT_PRESENT congela el score
         
-        # Lógica de cambio de candidato
         if candidate != self._candidate_state:
             self._candidate_state = candidate
             self._candidate_reason = reason
             self._candidate_since = current_time
             
-        # Validar tiempos (Grace periods)
         time_in_candidate = current_time - self._candidate_since
         confirm_new_state = False
         
@@ -326,13 +771,11 @@ class FocusTracker:
         elif candidate == ConcentrationState.FOCUSED and time_in_candidate >= 0.3:
             confirm_new_state = True
             
-        # Si se confirma un cambio frente al estado real:
         if confirm_new_state and candidate != self._current_confirmed_state:
             old_state = self._current_confirmed_state
             self._current_confirmed_state = candidate
             confirmed_reason = self._candidate_reason
             
-            # Guardamos el evento si es distracción
             if candidate == ConcentrationState.DISTRACTED:
                 self._distraction_events.append({
                     "timestamp": current_time, 
@@ -358,83 +801,19 @@ class FocusTracker:
                 except Exception as e:
                     print(f"Error on_distracted: {e}")
                     
-        # Actualizar exposición pública de datos en cada frame
+        # Persist last valid landmarks so the mesh never flickers
+        if "landmarks_2d" in raw_data and raw_data["landmarks_2d"]:
+            self._last_valid_landmarks = raw_data["landmarks_2d"]
+        elif self._last_valid_landmarks:
+            raw_data["landmarks_2d"] = self._last_valid_landmarks
+
         with self._state_lock:
+            # Store frame + state atomically so demo always gets a matched pair
+            if frame is not None:
+                self._last_frame = frame.copy()
             self._current_state = FocusState(
                 state=self._current_confirmed_state,
                 score=self._score,
                 distraction_reason=self._candidate_reason if self._current_confirmed_state != ConcentrationState.FOCUSED else None,
                 raw_data=raw_data
             )
-
-    def _estimate_gaze(self, blendshape_dict: Dict):
-        """Estimate gaze direction using ARKit eyeLook blendshapes.
-        
-        These are specifically designed by Apple for gaze tracking and are
-        far more accurate than trying to compute iris position from landmarks.
-        
-        Blendshapes used:
-          - eyeLookOutLeft/Right: eye looking away from nose (outward)
-          - eyeLookInLeft/Right: eye looking towards nose (inward)
-          - eyeLookUpLeft/Right: eye looking up
-          - eyeLookDownLeft/Right: eye looking down
-        """
-        if not blendshape_dict:
-            return "center", 0.0, 0.0
-        
-        # When looking LEFT: left eye looks OUT, right eye looks IN
-        look_left = (
-            blendshape_dict.get("eyeLookOutLeft", 0) + 
-            blendshape_dict.get("eyeLookInRight", 0)
-        ) / 2.0
-        
-        # When looking RIGHT: right eye looks OUT, left eye looks IN
-        look_right = (
-            blendshape_dict.get("eyeLookOutRight", 0) + 
-            blendshape_dict.get("eyeLookInLeft", 0)
-        ) / 2.0
-        
-        # Vertical gaze (averaged from both eyes)
-        look_up = (
-            blendshape_dict.get("eyeLookUpLeft", 0) + 
-            blendshape_dict.get("eyeLookUpRight", 0)
-        ) / 2.0
-        
-        look_down = (
-            blendshape_dict.get("eyeLookDownLeft", 0) + 
-            blendshape_dict.get("eyeLookDownRight", 0)
-        ) / 2.0
-        
-        # Composite gaze axes: positive = right/down, negative = left/up
-        gaze_h = look_right - look_left
-        gaze_v = look_down - look_up
-        
-        # Auto-calibration: learn the user's "looking at screen" baseline
-        if not self._gaze_calibrated:
-            self._gaze_calibration_samples.append((gaze_h, gaze_v))
-            if len(self._gaze_calibration_samples) >= self._gaze_calibration_frames:
-                h_samples = [s[0] for s in self._gaze_calibration_samples]
-                v_samples = [s[1] for s in self._gaze_calibration_samples]
-                self._gaze_baseline_h = sorted(h_samples)[len(h_samples)//2]
-                self._gaze_baseline_v = sorted(v_samples)[len(v_samples)//2]
-                self._gaze_calibrated = True
-                print(f"[CALIBRACIÓN] Gaze baseline: H={self._gaze_baseline_h:+.3f}, V={self._gaze_baseline_v:+.3f}")
-            return "center", gaze_h, gaze_v
-        
-        # Deviation from calibrated center
-        dev_h = gaze_h - self._gaze_baseline_h
-        dev_v = gaze_v - self._gaze_baseline_v
-        
-        # Check against thresholds
-        if dev_h > self._gaze_threshold_h:
-            status = "gaze_off_screen_right"
-        elif dev_h < -self._gaze_threshold_h:
-            status = "gaze_off_screen_left" 
-        elif dev_v < -self._gaze_threshold_v:
-            status = "gaze_off_screen_up"
-        elif dev_v > self._gaze_threshold_v:
-            status = "gaze_off_screen_down"
-        else:
-            status = "center"
-            
-        return status, dev_h, dev_v

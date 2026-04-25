@@ -1,0 +1,46 @@
+# Resumen del Proyecto: BrainCODE Focus Tracker
+
+Este documento resume el estado actual, las tecnologías y las reglas lógicas del sistema de seguimiento de concentración (Focus Tracker). Sirve como contexto fundamental para entender la arquitectura y cómo se toman las decisiones de atención del usuario.
+
+## 1. Propósito General
+El programa es un **detector de atención y concentración por visión computacional** que evalúa en tiempo real si un usuario está mirando la pantalla (FOCUSED), si está distraído (DISTRACTED) o si no está en su puesto (NOT_PRESENT). Está diseñado para ser un motor backend estricto pero justo, minimizando los falsos positivos.
+
+## 2. Tecnologías y Bibliotecas
+- **Python**: Lenguaje principal.
+- **MediaPipe (Google)**: Motor de IA utilizado (`FaceLandmarker`). Se usa específicamente porque permite extraer tanto la matriz de transformación facial (pose de la cabeza en 3D) como los **Blendshapes de ARKit** (métricas de microexpresiones y movimiento ocular, cruciales para el gaze tracking).
+- **OpenCV (`cv2`)**: Se utiliza para capturar la cámara, procesar los frames y renderizar la interfaz gráfica de la demo (HUD holográfico, puntos faciales y anillos de iris).
+- **NumPy**: Utilizado para cálculos matemáticos, percentiles y limpieza estadísitica de datos (IQR).
+
+## 3. Arquitectura de Archivos
+- `backend/focus_tracker.py`: El núcleo lógico. Contiene la clase `FocusTracker` que corre en un hilo separado (`threading.Thread`). Maneja el modelo de MediaPipe, la lógica de estados, el sistema de puntuación y la calibración.
+- `backend/demo.py`: La interfaz de usuario visual. Instancia el tracker, dibuja la malla facial minimalista (puntos de color `#59A5D8`), los indicadores visuales y gestiona las entradas de teclado (espacio/enter para calibrar, 'f' para pantalla completa).
+
+## 4. Sistema de Calibración Guiada (Prevención de Falsos Positivos)
+Para evitar que movimientos normales o setups de cámara asimétricos penalicen al usuario, el programa tiene una máquina de estados de calibración (`CalibrationPhase`):
+1. **WAITING_TO_START**: La detección real está pausada. Espera que el usuario presione Espacio/Enter.
+2. **CENTER (Baseline)**: El usuario mira al centro por ~2 segundos. Calcula la posición "neutral" de la mirada y la cabeza.
+3. **CORNERS (Thresholds)**: El usuario mira a los bordes de la pantalla por ~3 segundos. 
+   - **Lógica Matemática**: El tracker calcula el percentil 95 de la desviación máxima durante esta fase para establecer los umbrales adaptativos. Esto significa que el umbral de distracción se ajusta exactamente al tamaño físico del monitor del usuario.
+   - **Limpieza (IQR)**: Durante la calibración se ignoran los parpadeos (que corrompen los datos de mirada) y se eliminan outliers estadísticos usando el Rango Intercuartil.
+
+## 5. Reglas de Detección de Estado
+El estado final se evalúa en jerarquía. Si ocurre alguna de estas condiciones, se propone una distracción (`candidate`):
+1. **eyes_closed**: Los ojos están cerrados (blink_score > 0.5 en ambos ojos) durante más de 0.5 segundos.
+2. **head_turned_side**: El Yaw (giro horizontal) de la cabeza supera el umbral (por defecto 25° desde el baseline).
+3. **head_turned_up / head_turned_down**: El Pitch (inclinación vertical) supera los umbrales.
+4. **gaze_off_screen**: La mirada se sale de los umbrales adaptativos calculados.
+   - **Gaze Voting System**: Para evitar que una lectura errónea o un micro-movimiento penalice, se usa un sistema N-of-M. Se requiere que la mirada esté fuera de la pantalla en al menos **5 de los últimos 8 frames**.
+
+**Grace Period (Tolerancia temporal):**
+Ninguna distracción se confirma instantáneamente. Un candidato a `DISTRACTED` debe mantenerse ininterrumpidamente por **1.5 segundos** para volverse oficial (el estado `NOT_PRESENT` sí es instantáneo).
+
+## 6. Sistema de Puntuación (Score)
+El sistema mantiene un `score` del 0 al 100%, simulando la "salud" de un pomodoro:
+- **Penalización rápida**: Si el usuario está `DISTRACTED`, el score baja rápidamente (perdería el 100% en 1/4 del tiempo total del pomodoro).
+- **Recuperación lenta**: Si el usuario está `FOCUSED`, el score sube lentamente (tarda un pomodoro completo en recuperar de 0 a 100).
+- **Bono de racha (Streak)**: Si el usuario mantiene una racha de concentración mayor a 5 minutos (300s), la velocidad de recuperación de score se multiplica por 1.5x.
+
+## 7. Normas de Implementación a Seguir
+- **No usar puntos de iris raw**: Para la mirada, se utilizan *siempre* los Blendshapes (`eyeLookOut`, `eyeLookIn`, `eyeLookUp`, `eyeLookDown`). Son exponencialmente más precisos que intentar hacer matemáticas con las coordenadas XY de los landmarks del iris.
+- **Suavizado (Smoothing)**: Todos los datos ruidosos (pose de cabeza y vectores de mirada) pasan por un filtro de media móvil antes de ser evaluados para estabilizar los cálculos.
+- **Separación de UI y Lógica**: `FocusTracker` nunca debe tener código de dibujo (`cv2`). Solo emite un `FocusState` limpio con diccionarios de `raw_data`. `demo.py` es el único responsable de pintar.
