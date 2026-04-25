@@ -31,10 +31,6 @@ html, body {
   border-bottom:1.5px solid rgba(200,160,100,0.2);
   flex-shrink:0; user-select:none; gap:14px;
 }
-.traffic-lights { display:flex; gap:8px; flex-shrink:0; }
-.tl { width:13px; height:13px; border-radius:50%; box-shadow:inset 0 1px 2px rgba(0,0,0,0.15); }
-.tl-red { background:#ff6059; } .tl-yellow { background:#ffbd2e; } .tl-green { background:#28ca42; }
-
 .tb-brand { display:flex; align-items:center; gap:8px; flex-shrink:0; }
 .tb-brand-mascot { position:relative; width:30px; height:30px; flex-shrink:0; }
 .tb-brand-mascot .brain-svg { filter:drop-shadow(0 2px 4px rgba(100,60,20,0.18)); }
@@ -264,6 +260,46 @@ html, body {
 
 .metrics-layout::-webkit-scrollbar { width:4px; }
 .metrics-layout::-webkit-scrollbar-thumb { background:rgba(200,160,100,0.3); border-radius:2px; }
+
+/* Setup wizard */
+.wizard { display:flex; flex-direction:column; align-items:center; gap:18px; padding:8px 12px; max-width:540px; width:100%; animation:wizfade 0.25s ease; }
+@keyframes wizfade { from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:translateY(0)} }
+.wizard-title { font-size:22px; font-weight:900; color:#3d2c1e; text-align:center; line-height:1.2; letter-spacing:-0.4px; }
+.wizard-sub { font-size:13px; color:#b09070; font-weight:600; text-align:center; margin-top:-10px; }
+.wizard-options { display:flex; gap:14px; width:100%; flex-wrap:wrap; justify-content:center; }
+.wizard-card {
+  flex:1; min-width:180px; background:#fff;
+  border:2px solid rgba(200,160,100,0.25); border-radius:16px;
+  padding:20px 16px; cursor:pointer; transition:all 0.2s;
+  display:flex; flex-direction:column; align-items:center; gap:8px;
+  font-family:'Nunito',sans-serif; box-shadow:0 2px 8px rgba(100,60,20,0.04);
+}
+.wizard-card:hover { border-color:#5b8a6e; transform:translateY(-3px); box-shadow:0 8px 22px rgba(91,138,110,0.18); }
+.wizard-card-emoji { font-size:36px; line-height:1; }
+.wizard-card-title { font-size:15px; font-weight:900; color:#3d2c1e; }
+.wizard-card-desc { font-size:11px; font-weight:600; color:#b09070; text-align:center; line-height:1.4; }
+.wizard-form {
+  display:flex; flex-direction:column; gap:12px; width:100%;
+  background:#fff; border:1.5px solid rgba(200,160,100,0.25);
+  border-radius:16px; padding:16px 20px;
+}
+.wizard-row { display:flex; align-items:center; justify-content:space-between; gap:14px; }
+.wizard-label { font-size:13px; font-weight:700; color:#6a5040; }
+.wizard-num-wrap { display:flex; align-items:center; gap:6px; }
+.wizard-num {
+  width:70px; padding:7px 10px;
+  border:1.5px solid rgba(200,160,100,0.3); border-radius:10px;
+  font-size:14px; font-weight:800; color:#3d2c1e; text-align:center;
+  font-family:'Nunito',sans-serif; outline:none;
+}
+.wizard-num:focus { border-color:#5b8a6e; }
+.wizard-num-suffix { font-size:11px; color:#b09070; font-weight:700; }
+.wizard-actions { display:flex; gap:10px; justify-content:space-between; width:100%; }
+.wizard-btn { border:none; cursor:pointer; font-family:'Nunito',sans-serif; font-weight:800; border-radius:18px; padding:10px 20px; font-size:13px; transition:all 0.2s; }
+.wizard-btn.back { background:transparent; color:#a0805a; border:1.5px solid rgba(200,160,100,0.3); }
+.wizard-btn.back:hover { background:#f5ede0; }
+.wizard-btn.next { background:#5b8a6e; color:#fff; box-shadow:0 4px 14px rgba(91,138,110,0.4); }
+.wizard-btn.next:hover { background:#4a7a5e; transform:translateY(-1px); }
 </style>
 </head>
 <body>
@@ -393,35 +429,177 @@ function Ring({ segs, idle }) {
   );
 }
 
-const WORK=25*60, BRK=5*60;
 function usePomodoro() {
+  // config: null (sin sesión) | { mode:'pomodoro', workMin, breakMin, totalPoms } | { mode:'freeflow' }
+  const [config, setConfig] = useState(null);
   const [running, setRunning] = useState(false);
   const [isBreak, setIsBreak] = useState(false);
-  const [secs, setSecs] = useState(WORK);
+  const [secs, setSecs] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
   const [done, setDone] = useState(0);
+  const [completed, setCompleted] = useState(false);
+
+  function start(cfg) {
+    setConfig(cfg);
+    setIsBreak(false);
+    setDone(0);
+    setCompleted(false);
+    setElapsed(0);
+    setSecs(cfg.mode === 'pomodoro' ? cfg.workMin * 60 : 0);
+    setRunning(true);
+  }
+  function reset() {
+    setRunning(false); setConfig(null); setIsBreak(false);
+    setSecs(0); setElapsed(0); setDone(0); setCompleted(false);
+  }
 
   useEffect(() => {
-    if (!running) return;
+    if (!running || !config) return;
+    if (config.mode === 'freeflow') {
+      const t = setInterval(() => setElapsed(e => e+1), 1000);
+      return () => clearInterval(t);
+    }
     const t = setInterval(() => {
       setSecs(s => {
         if (s <= 1) {
-          if (!isBreak) { setIsBreak(true); setSecs(BRK); setDone(d=>d+1); }
-          else { setIsBreak(false); setSecs(WORK); }
-          return s;
+          if (!isBreak) {
+            const newDone = done + 1;
+            setDone(newDone);
+            if (config.totalPoms && newDone >= config.totalPoms) {
+              setRunning(false); setCompleted(true); return 0;
+            }
+            setIsBreak(true); return config.breakMin * 60;
+          } else {
+            setIsBreak(false); return config.workMin * 60;
+          }
         }
-        return s-1;
+        return s - 1;
       });
     }, 1000);
     return () => clearInterval(t);
-  }, [running, isBreak]);
+  }, [running, isBreak, config, done]);
 
   const fmt = s => `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
   function skip() {
-    if (isBreak) { setIsBreak(false); setSecs(WORK); }
-    else { setIsBreak(true); setSecs(BRK); setDone(d=>d+1); }
+    if (!config || config.mode !== 'pomodoro') return;
+    if (isBreak) { setIsBreak(false); setSecs(config.workMin * 60); }
+    else {
+      const newDone = done + 1;
+      setDone(newDone);
+      if (config.totalPoms && newDone >= config.totalPoms) {
+        setRunning(false); setCompleted(true); return;
+      }
+      setIsBreak(true); setSecs(config.breakMin * 60);
+    }
   }
-  return { running, setRunning, isBreak, secs, fmt, done, skip,
-    reset: () => { setRunning(false); setIsBreak(false); setSecs(WORK); setDone(0); } };
+  return { config, running, setRunning, isBreak, secs, elapsed, fmt, done, skip, start, reset, completed };
+}
+
+function SessionWizard({ onStart }) {
+  const [mode, setMode] = useState(null);    // 'pomodoro' | 'freeflow'
+  const [series, setSeries] = useState(null); // 'single' | 'serie'
+  const [count, setCount] = useState(4);
+  const [workMin, setWorkMin] = useState(25);
+  const [breakMin, setBreakMin] = useState(5);
+
+  const step = mode == null ? 'mode'
+    : mode === 'freeflow' ? 'confirmFree'
+    : series == null ? 'count'
+    : 'durations';
+
+  if (step === 'mode') return (
+    <div className="wizard">
+      <div className="wizard-title">¿Cómo quieres trabajar hoy?</div>
+      <div className="wizard-sub">Elige el ritmo de tu sesión</div>
+      <div className="wizard-options">
+        <div className="wizard-card" onClick={()=>setMode('pomodoro')}>
+          <div className="wizard-card-emoji">🍅</div>
+          <div className="wizard-card-title">Pomodoro</div>
+          <div className="wizard-card-desc">Bloques de trabajo enfocado con descansos automáticos</div>
+        </div>
+        <div className="wizard-card" onClick={()=>setMode('freeflow')}>
+          <div className="wizard-card-emoji">🌊</div>
+          <div className="wizard-card-title">A tu ritmo</div>
+          <div className="wizard-card-desc">Sin temporizador. Mide tu actividad mientras trabajas</div>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (step === 'confirmFree') return (
+    <div className="wizard">
+      <div className="wizard-title">Sesión libre 🌊</div>
+      <div className="wizard-sub">Mediremos tu actividad sin interrumpirte</div>
+      <div className="wizard-actions">
+        <button className="wizard-btn back" onClick={()=>setMode(null)}>← Volver</button>
+        <button className="wizard-btn next" onClick={()=>onStart({ mode:'freeflow' })}>Empezar →</button>
+      </div>
+    </div>
+  );
+
+  if (step === 'count') return (
+    <div className="wizard">
+      <div className="wizard-title">¿Único o serie?</div>
+      <div className="wizard-sub">Cuántos pomodoros vas a hacer</div>
+      <div className="wizard-options">
+        <div className="wizard-card" onClick={()=>{ setSeries('single'); setCount(1); }}>
+          <div className="wizard-card-emoji">🎯</div>
+          <div className="wizard-card-title">Único pomodoro</div>
+          <div className="wizard-card-desc">Un bloque de trabajo y un descanso</div>
+        </div>
+        <div className="wizard-card" onClick={()=>{ setSeries('serie'); setCount(4); }}>
+          <div className="wizard-card-emoji">🔁</div>
+          <div className="wizard-card-title">Serie</div>
+          <div className="wizard-card-desc">Varios pomodoros encadenados</div>
+        </div>
+      </div>
+      <div className="wizard-actions">
+        <button className="wizard-btn back" onClick={()=>setMode(null)}>← Volver</button>
+      </div>
+    </div>
+  );
+
+  // step === 'durations'
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  return (
+    <div className="wizard">
+      <div className="wizard-title">{series === 'serie' ? 'Configura tu serie' : 'Configura tu pomodoro'}</div>
+      <div className="wizard-sub">Ajusta los tiempos a tu gusto</div>
+      <div className="wizard-form">
+        {series === 'serie' && (
+          <div className="wizard-row">
+            <span className="wizard-label">🔁 Cantidad de pomodoros</span>
+            <div className="wizard-num-wrap">
+              <input className="wizard-num" type="number" min="2" max="12" value={count}
+                onChange={e=>setCount(clamp(parseInt(e.target.value)||2, 2, 12))}/>
+            </div>
+          </div>
+        )}
+        <div className="wizard-row">
+          <span className="wizard-label">⏱ Duración del pomodoro</span>
+          <div className="wizard-num-wrap">
+            <input className="wizard-num" type="number" min="1" max="120" value={workMin}
+              onChange={e=>setWorkMin(clamp(parseInt(e.target.value)||25, 1, 120))}/>
+            <span className="wizard-num-suffix">min</span>
+          </div>
+        </div>
+        <div className="wizard-row">
+          <span className="wizard-label">☕ Duración del descanso</span>
+          <div className="wizard-num-wrap">
+            <input className="wizard-num" type="number" min="1" max="60" value={breakMin}
+              onChange={e=>setBreakMin(clamp(parseInt(e.target.value)||5, 1, 60))}/>
+            <span className="wizard-num-suffix">min</span>
+          </div>
+        </div>
+      </div>
+      <div className="wizard-actions">
+        <button className="wizard-btn back" onClick={()=>setSeries(null)}>← Volver</button>
+        <button className="wizard-btn next" onClick={()=>onStart({ mode:'pomodoro', workMin, breakMin, totalPoms: count })}>
+          ▶ Empezar {series === 'serie' ? `${count} pomodoros` : 'pomodoro'}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 const STATES=['working','away','social','absent'];
@@ -511,20 +689,19 @@ function MonitorTab() {
   const { state, segs, flash } = useSim(pom.running);
   const [camOn, setCamOn] = useState(true);
   const [camOpen, setCamOpen] = useState(false);
-  const [task, setTask] = useState('');
-  const idle = !pom.running && pom.secs === WORK && pom.done === 0;
+  const idle = pom.config == null;
   const cfg = CFG[state];
 
   useEffect(() => {
     function onKey(e) {
-      if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
+      if (e.code === 'Space' && e.target.tagName !== 'INPUT' && pom.config) {
         e.preventDefault();
         pom.setRunning(r => !r);
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [pom.config]);
 
   const ringSegs = [
     { color:'#5b8a6e', pct: segs.working },
@@ -533,9 +710,23 @@ function MonitorTab() {
     { color:'#b0a090', pct: segs.absent },
   ];
 
-  const dots = Array.from({length: 4}, (_, i) => {
-    if (i < pom.done % 4) return 'done';
-    if (i === pom.done % 4 && pom.running && !pom.isBreak) return 'current';
+  if (idle) {
+    return (
+      <div className="content">
+        <div className="monitor-main">
+          <SessionWizard onStart={pom.start}/>
+        </div>
+        <CameraDrawer open={camOpen} setOpen={setCamOpen} camOn={camOn} setCamOn={setCamOn} state={state} idle={true}/>
+      </div>
+    );
+  }
+
+  const isFreeflow = pom.config.mode === 'freeflow';
+  const totalPoms = pom.config.totalPoms || 4;
+  const visualDots = Math.min(totalPoms, 6);
+  const dots = Array.from({length: visualDots}, (_, i) => {
+    if (i < pom.done) return 'done';
+    if (i === pom.done && pom.running && !pom.isBreak) return 'current';
     return 'upcoming';
   });
 
@@ -545,52 +736,40 @@ function MonitorTab() {
         <div className={`state-flash ${flash?'flash':''}`} style={{background: cfg.flash}}/>
 
         <div className="ring-wrap">
-          <Ring segs={ringSegs} idle={idle}/>
-          {!idle && (
-            <button className="ring-reset" onClick={pom.reset} title="Reiniciar sesión">↺</button>
-          )}
+          <Ring segs={ringSegs} idle={false}/>
+          <button className="ring-reset" onClick={pom.reset} title="Terminar sesión y volver al inicio">↺</button>
           <div className="ring-center">
-            {idle ? (
-              <div className="idle-center">
-                <div className="idle-emoji">⏸</div>
-                <div className="idle-title">Sin sesión activa</div>
-                <div className="idle-hint">Pulsa Iniciar o la barra espaciadora</div>
-              </div>
-            ) : (
-              <>
-                <div className={`pom-time ${pom.isBreak?'break':''}`}>{pom.fmt(pom.secs)}</div>
-                <div className="pom-sub">{pom.isBreak ? '☕ Tiempo de descanso' : '⏱ Para el descanso'}</div>
-              </>
-            )}
+            <div className={`pom-time ${pom.isBreak?'break':''}`}>{isFreeflow ? pom.fmt(pom.elapsed) : pom.fmt(pom.secs)}</div>
+            <div className="pom-sub">
+              {isFreeflow ? '🌊 Sesión libre · ' + (pom.running?'En curso':'Pausada')
+                : pom.completed ? '✅ Sesión completada'
+                : pom.isBreak ? '☕ Tiempo de descanso'
+                : '⏱ Para el descanso'}
+            </div>
           </div>
         </div>
 
         <div className="cta-row">
-          <button className={`pom-btn primary ${idle?'idle-cta':''}`} onClick={()=>pom.setRunning(r=>!r)}>
-            {pom.running ? '⏸ Pausar' : idle ? '▶ Iniciar sesión' : '▶ Continuar'}
-            <span className="kbd-hint">Space</span>
+          <button className="pom-btn primary" onClick={()=>pom.setRunning(r=>!r)} disabled={pom.completed}>
+            {pom.completed ? '✓ Terminado' : pom.running ? '⏸ Pausar' : '▶ Continuar'}
+            {!pom.completed && <span className="kbd-hint">Space</span>}
           </button>
-          {!idle && (
+          {!isFreeflow && !pom.completed && (
             <button className="pom-btn skip" onClick={pom.skip} title={pom.isBreak?'Saltar descanso':'Saltar pomodoro'}>
               ⤳ {pom.isBreak ? 'Saltar descanso' : 'Saltar'}
             </button>
           )}
         </div>
 
-        {idle && (
-          <div className="task-input-wrap">
-            <span className="task-input-icon">✏️</span>
-            <input className="task-input" placeholder="¿En qué vas a trabajar?" value={task} onChange={e=>setTask(e.target.value)}/>
+        {!isFreeflow && (
+          <div className="session-history">
+            {dots.map((d,i) => (<div key={i} className={`sess-dot ${d}`}/>))}
+            <span className="sess-cycle">{pom.done}/{totalPoms} pomodoros · {pom.config.workMin}/{pom.config.breakMin} min</span>
           </div>
         )}
-
-        <div className="session-history">
-          {dots.map((d,i) => (<div key={i} className={`sess-dot ${d}`}/>))}
-          <span className="sess-cycle">Ciclo {Math.floor(pom.done/4)+1} · {pom.done%4}/4 pomodoros</span>
-        </div>
       </div>
 
-      <CameraDrawer open={camOpen} setOpen={setCamOpen} camOn={camOn} setCamOn={setCamOn} state={state} idle={idle}/>
+      <CameraDrawer open={camOpen} setOpen={setCamOpen} camOn={camOn} setCamOn={setCamOn} state={state} idle={false}/>
     </div>
   );
 }
@@ -735,9 +914,6 @@ function App() {
   return (
     <div className="window">
       <div className="titlebar">
-        <div className="traffic-lights">
-          <div className="tl tl-red"/><div className="tl tl-yellow"/><div className="tl tl-green"/>
-        </div>
         <div className="tb-brand">
           <div className="tb-brand-mascot" style={{'--mascot-state': mascotColor}} title={`Estado: ${mascotLabel}`}>
             <BrainMascot size={30}/>
