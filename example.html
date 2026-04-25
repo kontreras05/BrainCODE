@@ -4,11 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BrainCode</title>
-<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -248,27 +246,25 @@ html,body{width:100%;height:100%;background:var(--bg);display:flex;align-items:c
 .cam-log-title{font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:2px;}
 .cam-log-row{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-muted);}
 .cam-log-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+
+/* ── TWEAKS PANEL ── */
+.tweaks{position:absolute;bottom:16px;right:16px;width:210px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 12px 40px oklch(0% 0 0/0.14);padding:14px;z-index:200;display:flex;flex-direction:column;gap:12px;animation:up 0.2s ease;}
+.tweaks-hdr{display:flex;align-items:center;justify-content:space-between;}
+.tweaks-title{font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;}
+.tweaks-close{background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:16px;line-height:1;font-weight:700;padding:0;transition:color 0.15s;}
+.tweaks-close:hover{color:var(--text);}
+.twk-row{display:flex;flex-direction:column;gap:5px;}
+.twk-lbl{font-size:11px;color:var(--text-muted);font-weight:600;}
+.twk-opts{display:flex;gap:4px;flex-wrap:wrap;}
+.twk-opt{padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid var(--border);background:var(--surface-2);cursor:pointer;color:var(--text-mid);transition:all 0.15s;}
+.twk-opt:hover{border-color:var(--border-2);}
+.twk-opt.on{background:var(--green);border-color:var(--green);color:#fff;}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
-
-/* ═══════════════ pywebview bridge ═══════════════ */
-function pyApi() {
-  return (typeof window !== 'undefined' && window.pywebview && window.pywebview.api) || null;
-}
-function waitForPyApi(timeoutMs = 3000) {
-  return new Promise(resolve => {
-    if (pyApi()) return resolve(pyApi());
-    const t0 = Date.now();
-    const iv = setInterval(() => {
-      if (pyApi()) { clearInterval(iv); resolve(pyApi()); }
-      else if (Date.now() - t0 > timeoutMs) { clearInterval(iv); resolve(null); }
-    }, 100);
-  });
-}
 
 /* ═══════════════ BRAIN SVG MASCOT ═══════════════ */
 function BrainSVG({ blink, color = '#4a8a6a' }) {
@@ -616,76 +612,31 @@ function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }) {
 }
 
 /* ═══════════════ METRICS VIEW ═══════════════ */
-const DEFAULT_STATS = [
-  { id:'working', label: 'Tiempo activo',  val: '4h 32m', delta: '+12%', up: true,  color: CFG.working.hex, pct: 0.72 },
-  { id:'away',    label: 'Distracciones',  val: '23',     delta: '−5',   up: true,  color: CFG.away.hex,    pct: 0.38 },
-  { id:'social',  label: 'Redes sociales', val: '18 min', delta: '+3m',  up: false, color: CFG.social.hex,  pct: 0.25 },
-  { id:'absent',  label: 'Ausencias',      val: '2',      delta: '=',    up: null,  color: CFG.absent.hex,  pct: 0.12 },
-];
-const DEFAULT_HOURLY = [
-  { h: '9h',  w: 0.9,  a: 0.05, s: 0.04, ab: 0.01 },
-  { h: '10h', w: 0.7,  a: 0.1,  s: 0.15, ab: 0.05 },
-  { h: '11h', w: 0.8,  a: 0.1,  s: 0.05, ab: 0.05 },
-  { h: '12h', w: 0.3,  a: 0.2,  s: 0.3,  ab: 0.2  },
-  { h: '13h', w: 0.1,  a: 0.1,  s: 0.1,  ab: 0.7  },
-  { h: '14h', w: 0.6,  a: 0.2,  s: 0.1,  ab: 0.1  },
-  { h: '15h', w: 0.85, a: 0.05, s: 0.05, ab: 0.05 },
-  { h: '16h', w: 0.75, a: 0.1,  s: 0.1,  ab: 0.05 },
-  { h: '17h', w: 0.5,  a: 0.2,  s: 0.2,  ab: 0.1  },
-];
-
-function fmtMins(secs) {
-  const m = Math.round(secs/60);
-  return m >= 60 ? `${Math.floor(m/60)}h ${m%60}m` : `${m}m`;
-}
-
 function MetricsView() {
   const [period, setPeriod] = useState('Hoy');
-  const [stats, setStats] = useState(DEFAULT_STATS);
-  const [hourly, setHourly] = useState(DEFAULT_HOURLY);
-  const [dateLbl, setDateLbl] = useState('');
-
-  useEffect(() => {
-    const now = new Date();
-    const date = now.toLocaleDateString('es-ES', { weekday:'long', day:'numeric', month:'long' });
-    const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    const week = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-    setDateLbl(`${date.charAt(0).toUpperCase() + date.slice(1)} · Semana ${week}`);
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-    async function load() {
-      const api = await waitForPyApi();
-      if (!api || !alive) return;
-      try {
-        const today = await api.get_today_metrics();
-        if (alive && today && today.has_data) {
-          const t = today.totals_seconds;
-          setStats([
-            { id:'working', label:'Tiempo activo',  val: fmtMins(t.working), delta: '', up: null,  color: CFG.working.hex, pct: Math.min(t.working/(8*3600), 1) },
-            { id:'away',    label:'Distracciones',  val: fmtMins(t.away),    delta: '', up: null,  color: CFG.away.hex,    pct: Math.min(t.away/(2*3600), 1) },
-            { id:'social',  label:'Redes sociales', val: fmtMins(t.social),  delta: '', up: null,  color: CFG.social.hex,  pct: Math.min(t.social/(2*3600), 1) },
-            { id:'absent',  label:'Ausencias',      val: fmtMins(t.absent),  delta: '', up: null,  color: CFG.absent.hex,  pct: Math.min(t.absent/(2*3600), 1) },
-          ]);
-        }
-        const hb = await api.get_hourly_breakdown();
-        if (alive && hb && hb.length) setHourly(hb);
-      } catch (err) { console.warn('API error', err); }
-    }
-    load();
-    const iv = setInterval(load, 15000);
-    return () => { alive = false; clearInterval(iv); };
-  }, []);
-
+  const stats = [
+    { label: 'Tiempo activo',  val: '4h 32m', delta: '+12%', up: true,  color: CFG.working.hex, pct: 0.72 },
+    { label: 'Distracciones',  val: '23',     delta: '−5',   up: true,  color: CFG.away.hex,    pct: 0.38 },
+    { label: 'Redes sociales', val: '18 min', delta: '+3m',  up: false, color: CFG.social.hex,  pct: 0.25 },
+    { label: 'Ausencias',      val: '2',      delta: '=',    up: null,  color: CFG.absent.hex,  pct: 0.12 },
+  ];
+  const hourly = [
+    { h: '9h',  w: 0.9,  a: 0.05, s: 0.04, ab: 0.01 },
+    { h: '10h', w: 0.7,  a: 0.1,  s: 0.15, ab: 0.05 },
+    { h: '11h', w: 0.8,  a: 0.1,  s: 0.05, ab: 0.05 },
+    { h: '12h', w: 0.3,  a: 0.2,  s: 0.3,  ab: 0.2  },
+    { h: '13h', w: 0.1,  a: 0.1,  s: 0.1,  ab: 0.7  },
+    { h: '14h', w: 0.6,  a: 0.2,  s: 0.1,  ab: 0.1  },
+    { h: '15h', w: 0.85, a: 0.05, s: 0.05, ab: 0.05 },
+    { h: '16h', w: 0.75, a: 0.1,  s: 0.1,  ab: 0.05 },
+    { h: '17h', w: 0.5,  a: 0.2,  s: 0.2,  ab: 0.1  },
+  ];
   return (
     <div className="metrics">
       <div className="mhdr">
         <div>
           <div className="mhdr-title">Productividad</div>
-          <div className="mhdr-sub">{dateLbl}</div>
+          <div className="mhdr-sub">Sábado 25 de abril · Semana 17</div>
         </div>
         <div className="periods">
           {['Hoy', 'Semana', 'Mes'].map(p => (
@@ -712,12 +663,10 @@ function MetricsView() {
             </div>
             <div className="stat-val" style={{ color: s.color }}>{s.val}</div>
             <div className="stat-bar"><div className="stat-bar-fill" style={{ width: `${s.pct * 100}%`, background: s.color, opacity: 0.7 }} /></div>
-            {s.delta && (
-              <div className="stat-delta" style={{
-                background: s.up === null ? 'var(--surface-2)' : s.up ? 'oklch(52% 0.13 155 / 0.1)' : 'oklch(57% 0.18 25 / 0.1)',
-                color: s.up === null ? 'var(--text-muted)' : s.up ? 'var(--green)' : 'var(--red)',
-              }}>{s.delta} vs ayer</div>
-            )}
+            <div className="stat-delta" style={{
+              background: s.up === null ? 'var(--surface-2)' : s.up ? 'oklch(52% 0.13 155 / 0.1)' : 'oklch(57% 0.18 25 / 0.1)',
+              color: s.up === null ? 'var(--text-muted)' : s.up ? 'var(--green)' : 'var(--red)',
+            }}>{s.delta} vs ayer</div>
           </div>
         ))}
       </div>
@@ -812,13 +761,104 @@ function JarsView() {
   );
 }
 
+/* ═══════════════ CAMERA VIEW ═══════════════ */
+const CAM_LOG = [
+  {time:'10:47', state:'working'},{time:'10:44', state:'social'},
+  {time:'10:38', state:'working'},{time:'10:31', state:'absent'},{time:'10:28', state:'working'},
+];
+
+function CameraView({ camOn, setCamOn, globalState }) {
+  const cfg = CFG[globalState];
+  const fc = globalState==='away'?'away':globalState==='social'?'distracted':globalState==='absent'?'absent':'';
+  return (
+    <div className="camera-view">
+      <div className="cam-big-feed">
+        {!camOn ? (
+          <div className="cam-off-view">
+            <div style={{fontSize:26,opacity:0.22}}>◉</div>
+            <div>Cámara apagada</div>
+            <button className="cam-on-btn" style={{marginTop:6}} onClick={()=>setCamOn(true)}>Activar</button>
+          </div>
+        ) : (
+          <div className="cam-live-view">
+            <div className="cam-scan"/>
+            <div className={`face-box ${fc}`}>
+              <div className="fc tl"/><div className="fc tr"/><div className="fc bl"/><div className="fc br"/>
+            </div>
+            <div className="rec"/>
+          </div>
+        )}
+      </div>
+      <div className="cam-panel">
+        <div className="cam-panel-state" style={{background:cfg.bg, color:cfg.hex}}>
+          <span>{cfg.icon}</span>
+          <span style={{flex:1}}>{camOn ? cfg.label : 'Detección inactiva'}</span>
+          <button className={camOn?'cam-off-btn':'cam-on-btn'} onClick={()=>setCamOn(o=>!o)}>
+            {camOn?'Apagar':'Activar'}
+          </button>
+        </div>
+        <div className="cam-log">
+          <div className="cam-log-title">Historial reciente</div>
+          {CAM_LOG.map((l,i) => (
+            <div key={i} className="cam-log-row">
+              <div className="cam-log-dot" style={{background:CFG[l.state].hex}}/>
+              <span style={{color:'var(--text-mid)',fontWeight:500,minWidth:36}}>{l.time}</span>
+              <span>{CFG[l.state].icon} {CFG[l.state].label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════ TWEAKS PANEL ═══════════════ */
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "mode": "focus",
+  "timer": "mono",
+  "accent": "verde",
+  "glow": "on"
+}/*EDITMODE-END*/;
+function TweaksPanel({ onClose }) {
+  const [v, setV] = useState(TWEAK_DEFAULTS);
+  function set(k, val) { const n = { ...v, [k]: val }; setV(n); window.parent.postMessage({ type: '__edit_mode_set_keys', edits: n }, '*'); }
+  return (
+    <div className="tweaks">
+      <div className="tweaks-hdr">
+        <div className="tweaks-title">Tweaks</div>
+        <button className="tweaks-close" onClick={onClose}>×</button>
+      </div>
+      <div className="twk-row">
+        <div className="twk-lbl">Fuente del timer</div>
+        <div className="twk-opts">
+          {['mono', 'sans'].map(f => <div key={f} className={`twk-opt${v.timer === f ? ' on' : ''}`} onClick={() => set('timer', f)}>{f === 'mono' ? 'JetBrains Mono' : 'Space Grotesk'}</div>)}
+        </div>
+      </div>
+      <div className="twk-row">
+        <div className="twk-lbl">Color de acento</div>
+        <div className="twk-opts">
+          {[['verde', '#4a8a6a'], ['azul', '#4a6a8a'], ['morado', '#6a4a8a']].map(([n, c]) => (
+            <div key={n} className={`twk-opt${v.accent === n ? ' on' : ''}`} onClick={() => set('accent', n)} style={v.accent === n ? { background: c, borderColor: c } : {}}>{n}</div>
+          ))}
+        </div>
+      </div>
+      <div className="twk-row">
+        <div className="twk-lbl">Animación de glow</div>
+        <div className="twk-opts">
+          {['on', 'off'].map(o => <div key={o} className={`twk-opt${v.glow === o ? ' on' : ''}`} onClick={() => set('glow', o)}>{o === 'on' ? 'Activado' : 'Desactivado'}</div>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════ APP ═══════════════ */
 function App() {
   const [tab, setTab] = useState('monitor');
   const [globalState, setGlobalState] = useState('working');
   const [camOn, setCamOn] = useState(true);
   const [camOpen, setCamOpen] = useState(false);
-  const [score, setScore] = useState({ pct: 72, mins: 272 });
+  const [tweaksOpen, setTweaksOpen] = useState(false);
 
   useEffect(() => {
     const onState = e => { if (e.detail) setGlobalState(e.detail); };
@@ -827,22 +867,18 @@ function App() {
   }, []);
 
   useEffect(() => {
-    let alive = true;
-    async function load() {
-      const api = await waitForPyApi();
-      if (!api || !alive) return;
-      try {
-        const t = await api.get_today_metrics();
-        if (alive && t && t.has_data) setScore({ pct: t.score_pct, mins: t.active_minutes });
-      } catch (err) { /* ignore */ }
-    }
-    load();
-    const iv = setInterval(load, 15000);
-    return () => { alive = false; clearInterval(iv); };
+    const onMsg = e => {
+      if (e.data?.type === '__activate_edit_mode') setTweaksOpen(true);
+      if (e.data?.type === '__deactivate_edit_mode') setTweaksOpen(false);
+    };
+    window.addEventListener('message', onMsg);
+    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+    return () => window.removeEventListener('message', onMsg);
   }, []);
 
   const cfg = CFG[globalState];
-  const fmtTime = m => m >= 60 ? `${Math.floor(m/60)}h ${m%60}m` : `${m}m`;
+
+
 
   return (
     <div className="window">
@@ -856,11 +892,11 @@ function App() {
         {/* Score orb */}
         <div className="orb-wrap">
           <div className="orb">
-            <div className="orb-num">{score.pct}</div>
+            <div className="orb-num">72</div>
             <div className="orb-sub">score</div>
           </div>
           <div className="orb-stats">
-            <div className="orb-time">{fmtTime(score.mins)} enfocado</div>
+            <div className="orb-time">4h 32m enfocado</div>
             <div className="orb-streak">3 días de racha</div>
           </div>
         </div>
@@ -908,7 +944,7 @@ function App() {
           </span>
           <span className="main-bar-sub">
             { tab === 'monitor' ? '· Detección en tiempo real'
-            : tab === 'metrics' ? '· Hoy'
+            : tab === 'metrics' ? '· Sáb 25 abril'
             : tab === 'jars'    ? '· Historial de sesiones'
             :                     '· Detección facial' }
           </span>
@@ -925,6 +961,8 @@ function App() {
             <CameraModal open={camOpen} setOpen={setCamOpen} camOn={camOn} setCamOn={setCamOn} state={globalState}/>
           </div>
         )}
+
+        {tweaksOpen && <TweaksPanel onClose={() => { setTweaksOpen(false); window.parent.postMessage({ type: '__edit_mode_dismissed' }, '*'); }} />}
       </div>
     </div>
   );
