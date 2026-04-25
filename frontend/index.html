@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BrainCode</title>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+html, body {
+  width:100%; height:100%;
+  background:#ddd5c8;
+  display:flex; align-items:center; justify-content:center;
+  font-family:'Nunito',sans-serif;
+  overflow:hidden;
+}
+.window {
+  width:920px; height:620px; background:#fdf8f0;
+  border-radius:18px;
+  box-shadow:0 24px 70px rgba(80,50,20,0.22), 0 2px 0 rgba(255,255,255,0.9) inset;
+  display:flex; flex-direction:column; overflow:hidden;
+  border:1.5px solid rgba(200,170,130,0.3);
+}
+
+.titlebar {
+  height:50px; background:#f5ede0;
+  display:flex; align-items:center; padding:0 14px;
+  border-bottom:1.5px solid rgba(200,160,100,0.2);
+  flex-shrink:0; user-select:none; gap:14px;
+}
+.traffic-lights { display:flex; gap:8px; flex-shrink:0; }
+.tl { width:13px; height:13px; border-radius:50%; box-shadow:inset 0 1px 2px rgba(0,0,0,0.15); }
+.tl-red { background:#ff6059; } .tl-yellow { background:#ffbd2e; } .tl-green { background:#28ca42; }
+
+.tb-brand { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.tb-brand-mascot { position:relative; width:30px; height:30px; flex-shrink:0; }
+.tb-brand-mascot .brain-svg { filter:drop-shadow(0 2px 4px rgba(100,60,20,0.18)); }
+.tb-brand-mascot::after {
+  content:''; position:absolute; bottom:-2px; right:-2px;
+  width:9px; height:9px; border-radius:50%;
+  background:var(--mascot-state, #5b8a6e);
+  border:2px solid #f5ede0;
+  transition:background 0.4s;
+}
+.tb-brand-name { color:#3d2c1e; font-size:14px; font-weight:900; letter-spacing:-0.2px; }
+
+.tb-score-chip {
+  display:flex; align-items:center; gap:8px;
+  background:#fff; border-radius:999px;
+  border:1.5px solid rgba(200,160,100,0.25);
+  padding:5px 12px 5px 6px;
+  box-shadow:0 2px 6px rgba(100,60,20,0.06);
+  margin-left:auto;
+}
+.tb-score-circle {
+  width:24px; height:24px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:9px; font-weight:900; color:#fff;
+  flex-shrink:0;
+}
+.tb-score-label { font-size:11px; font-weight:700; color:#b09070; text-transform:uppercase; letter-spacing:0.05em; }
+.tb-score-time { font-size:12px; font-weight:700; color:#5b8a6e; }
+.tb-score-sep { width:1px; height:14px; background:rgba(200,160,100,0.3); }
+.tb-score-streak { font-size:11px; font-weight:800; color:#e8614a; }
+
+.tb-icon-btn {
+  width:30px; height:30px; border-radius:8px;
+  display:flex; align-items:center; justify-content:center;
+  background:transparent; border:none; cursor:pointer;
+  color:#a0805a; transition:all 0.2s;
+}
+.tb-icon-btn:hover { background:rgba(200,160,100,0.15); color:#3d2c1e; }
+
+.tabbar {
+  display:flex; background:#f5ede0;
+  border-bottom:1.5px solid rgba(200,160,100,0.2);
+  padding:0 20px; gap:4px; flex-shrink:0;
+}
+.tab {
+  padding:10px 20px; font-size:13px; font-weight:700; color:#c0a07a;
+  cursor:pointer; border-bottom:3px solid transparent;
+  transition:all 0.2s; margin-bottom:-1.5px;
+}
+.tab:hover { color:#7a5c3a; }
+.tab.active { color:#5b8a6e; border-bottom-color:#5b8a6e; }
+
+.content { flex:1; overflow:hidden; display:flex; position:relative; }
+
+.monitor-main {
+  flex:1; display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  padding:18px 24px; position:relative;
+}
+.state-flash { position:absolute; inset:0; pointer-events:none; opacity:0; }
+.state-flash.flash { animation:flashin 0.5s ease forwards; }
+@keyframes flashin { 0%{opacity:0.2} 100%{opacity:0} }
+
+.ring-wrap { position:relative; flex-shrink:0; width:280px; height:280px; }
+.ring-svg { transform:rotate(-90deg); overflow:visible; filter:drop-shadow(0 6px 22px rgba(0,0,0,0.09)); }
+.ring-center { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; }
+.pom-time { font-size:54px; font-weight:900; color:#3d2c1e; letter-spacing:-2px; line-height:1; transition:color 0.4s; font-variant-numeric:tabular-nums; }
+.pom-time.break { color:#5b8a6e; }
+.pom-sub { font-size:12px; font-weight:700; color:#b09070; }
+.idle-center { display:flex; flex-direction:column; align-items:center; gap:6px; }
+.idle-emoji { font-size:34px; line-height:1; }
+.idle-title { font-size:15px; font-weight:900; color:#c0a07a; }
+.idle-hint { font-size:11px; font-weight:600; color:#d0b898; text-align:center; max-width:130px; line-height:1.5; }
+
+.ring-reset {
+  position:absolute; top:8px; right:8px;
+  width:32px; height:32px; border-radius:50%;
+  background:#f5ede0; border:1.5px solid rgba(200,160,100,0.3);
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; color:#a0805a; transition:all 0.2s;
+  font-size:14px; font-weight:800;
+}
+.ring-reset:hover { background:#ede3d0; transform:rotate(-45deg); color:#3d2c1e; }
+
+.cta-row { display:flex; align-items:center; gap:10px; margin-top:18px; }
+.pom-btn { border:none; cursor:pointer; font-family:'Nunito',sans-serif; font-weight:800; border-radius:22px; transition:all 0.2s; display:flex; align-items:center; gap:8px; }
+.pom-btn.primary { background:#5b8a6e; color:#fff; font-size:14px; padding:10px 22px; box-shadow:0 4px 14px rgba(91,138,110,0.4); }
+.pom-btn.primary:hover { background:#4a7a5e; transform:translateY(-1px); box-shadow:0 6px 20px rgba(91,138,110,0.5); }
+.pom-btn.primary.idle-cta { font-size:16px; padding:13px 32px; box-shadow:0 8px 24px rgba(91,138,110,0.5); }
+.pom-btn.skip { background:#fff; color:#a0805a; font-size:13px; padding:10px 16px; border:1.5px solid rgba(200,160,100,0.3); }
+.pom-btn.skip:hover { background:#f5ede0; }
+.kbd-hint {
+  display:inline-flex; align-items:center; justify-content:center;
+  background:rgba(255,255,255,0.25); border:1px solid rgba(255,255,255,0.35);
+  border-radius:5px; padding:1px 7px;
+  font-size:10px; font-weight:800; letter-spacing:0.05em;
+  margin-left:4px;
+}
+
+.task-input-wrap {
+  margin-top:14px; display:flex; align-items:center; gap:8px;
+  background:#f9f3e8; border-radius:14px;
+  border:1.5px solid rgba(200,160,100,0.2);
+  padding:8px 14px; width:100%; max-width:340px;
+  transition:all 0.2s;
+}
+.task-input-wrap:focus-within { border-color:rgba(91,138,110,0.5); background:#fff; }
+.task-input-icon { font-size:14px; opacity:0.6; }
+.task-input { flex:1; border:none; background:transparent; outline:none; font-family:'Nunito',sans-serif; font-size:13px; font-weight:600; color:#3d2c1e; }
+.task-input::placeholder { color:#c0a07a; font-weight:600; }
+
+.session-history { display:flex; align-items:center; gap:6px; margin-top:14px; }
+.sess-dot { width:18px; height:18px; border-radius:50%; border:2px solid transparent; transition:all 0.3s; }
+.sess-dot.done { background:#5b8a6e; border-color:#5b8a6e; }
+.sess-dot.current { border-color:#5b8a6e; background:rgba(91,138,110,0.2); animation:pdot 1.2s infinite; }
+.sess-dot.upcoming { border-color:rgba(200,160,100,0.3); }
+@keyframes pdot { 0%,100%{transform:scale(1)} 50%{transform:scale(0.75)} }
+.sess-cycle { font-size:11px; font-weight:700; color:#b09070; margin-left:6px; }
+
+.cam-fab {
+  position:absolute; bottom:18px; right:18px;
+  display:flex; align-items:center; gap:8px;
+  background:#fff; border:1.5px solid rgba(200,160,100,0.3);
+  border-radius:999px; padding:8px 14px 8px 10px;
+  cursor:pointer; transition:all 0.25s;
+  box-shadow:0 4px 14px rgba(100,60,20,0.12);
+  z-index:50; font-family:'Nunito',sans-serif;
+}
+.cam-fab:hover { transform:translateY(-1px); box-shadow:0 6px 18px rgba(100,60,20,0.16); }
+.cam-fab-icon { font-size:14px; }
+.cam-fab-text { font-size:12px; font-weight:800; color:#3d2c1e; }
+.cam-fab-state { font-size:11px; font-weight:700; }
+.cam-fab-dot { width:8px; height:8px; border-radius:50%; animation:pdot 1.5s infinite; }
+
+.cam-drawer {
+  position:absolute; right:18px; bottom:18px;
+  width:240px; background:#fff;
+  border-radius:16px; border:1.5px solid rgba(200,160,100,0.25);
+  box-shadow:0 12px 40px rgba(80,50,20,0.18);
+  overflow:hidden; z-index:60;
+  animation:drawerin 0.25s ease;
+}
+@keyframes drawerin { from{transform:translateY(20px); opacity:0} to{transform:translateY(0); opacity:1} }
+.cam-drawer-head { display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid rgba(200,160,100,0.15); }
+.cam-drawer-title { display:flex; align-items:center; gap:6px; font-size:12px; font-weight:800; color:#3d2c1e; }
+.cam-close-btn { width:24px; height:24px; border:none; background:transparent; border-radius:6px; cursor:pointer; color:#a0805a; font-size:14px; font-weight:800; }
+.cam-close-btn:hover { background:rgba(200,160,100,0.15); color:#3d2c1e; }
+
+.cam-view {
+  margin:10px; border-radius:10px; overflow:hidden;
+  background:#1a1510; aspect-ratio:4/3;
+  position:relative; border:1.5px solid rgba(200,160,100,0.2);
+}
+.cam-off-mini {
+  width:100%; height:100%; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:6px;
+  color:#6a5040; font-size:11px; font-weight:700;
+}
+.cam-toggle-mini {
+  background:#5b8a6e; color:#fff; border:none;
+  padding:5px 12px; border-radius:14px;
+  cursor:pointer; font-size:11px; font-weight:800;
+  font-family:'Nunito',sans-serif;
+}
+.cam-live { width:100%; height:100%; display:flex; align-items:center; justify-content:center; position:relative; background:#120e0a; }
+.cam-scan { position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,rgba(91,138,110,0.8),transparent); animation:scan 2.5s linear infinite; }
+@keyframes scan { 0%{top:0} 100%{top:100%} }
+.face-box { width:50px; height:60px; border:2px solid rgba(91,138,110,0.8); border-radius:6px; position:relative; transition:all 0.4s; }
+.face-box.away { border-color:rgba(232,97,74,0.7); transform:translateX(24px) rotate(12deg); }
+.face-box.distracted { border-color:rgba(245,166,35,0.7); transform:translateX(-16px); }
+.face-box.absent { opacity:0; }
+.corner { position:absolute; width:8px; height:8px; border-style:solid; }
+.corner.tl{top:-2px;left:-2px;border-width:2.5px 0 0 2.5px;border-color:rgba(91,138,110,1);border-radius:3px 0 0}
+.corner.tr{top:-2px;right:-2px;border-width:2.5px 2.5px 0 0;border-color:rgba(91,138,110,1);border-radius:0 3px 0}
+.corner.bl{bottom:-2px;left:-2px;border-width:0 0 2.5px 2.5px;border-color:rgba(91,138,110,1);border-radius:0 0 0 3px}
+.corner.br{bottom:-2px;right:-2px;border-width:0 2.5px 2.5px 0;border-color:rgba(91,138,110,1);border-radius:0 0 3px}
+.rec-dot { position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:50%; background:#ff6059; animation:pdot 1s infinite; }
+.cam-label { position:absolute; bottom:5px; left:0; right:0; text-align:center; font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:0.1em; }
+
+.cam-state-mini { display:flex; align-items:center; gap:8px; padding:8px 12px 12px; font-size:12px; font-weight:700; }
+.cam-state-ic { font-size:14px; }
+
+.metrics-layout { width:100%; padding:20px 24px; display:flex; flex-direction:column; gap:14px; overflow-y:auto; }
+.metrics-header { display:flex; justify-content:space-between; align-items:center; }
+.metrics-title { font-size:17px; font-weight:800; color:#3d2c1e; }
+.metrics-sub { font-size:12px; color:#b09070; margin-top:2px; font-weight:600; }
+.period-tabs { display:flex; background:#ede3d0; border-radius:10px; padding:3px; gap:2px; }
+.period-tab { padding:5px 13px; border-radius:8px; font-size:12px; font-weight:700; color:#b09070; cursor:pointer; transition:all 0.2s; }
+.period-tab.active { background:#fff; color:#5b8a6e; box-shadow:0 1px 4px rgba(100,60,20,0.12); }
+
+.streak-card {
+  background:linear-gradient(135deg, #fff 0%, #fdf2e0 100%);
+  border-radius:14px; border:1.5px solid rgba(232,97,74,0.2);
+  padding:14px 18px; display:flex; align-items:center; gap:14px;
+  box-shadow:0 2px 8px rgba(100,60,20,0.06);
+}
+.streak-emoji { font-size:32px; }
+.streak-text { flex:1; }
+.streak-num { font-size:20px; font-weight:900; color:#e8614a; line-height:1; }
+.streak-label { font-size:12px; font-weight:700; color:#b09070; margin-top:3px; }
+
+.jars-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+.jar-card {
+  background:#fff; border-radius:16px; border:1.5px solid rgba(200,160,100,0.2);
+  padding:14px 10px 12px; display:flex; flex-direction:column; align-items:center; gap:8px;
+  cursor:pointer; transition:all 0.25s; box-shadow:0 2px 8px rgba(100,60,20,0.06);
+}
+.jar-card:hover { border-color:rgba(91,138,110,0.4); transform:translateY(-3px); box-shadow:0 8px 20px rgba(100,60,20,0.12); }
+.jar-brain-wrap { position:relative; width:76px; height:82px; }
+.jar-label { font-size:11px; font-weight:700; color:#b09070; text-align:center; }
+.jar-value { font-size:20px; font-weight:900; color:#3d2c1e; letter-spacing:-0.5px; }
+.jar-change { font-size:10px; font-weight:800; padding:2px 8px; border-radius:6px; }
+.jar-change.up { background:rgba(91,138,110,0.12); color:#5b8a6e; }
+.jar-change.down { background:rgba(232,97,74,0.1); color:#e8614a; }
+.jar-change.neutral { background:#f0e8d8; color:#b09070; }
+
+.timeline-card { background:#fff; border-radius:16px; border:1.5px solid rgba(200,160,100,0.2); padding:16px 18px; box-shadow:0 2px 8px rgba(100,60,20,0.06); }
+.timeline-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+.timeline-title { font-size:13px; font-weight:800; color:#6a5040; }
+.tl-legend { display:flex; gap:10px; flex-wrap:wrap; }
+.tl-legend-item { display:flex; align-items:center; gap:4px; font-size:10px; color:#a0805a; font-weight:600; }
+.tl-legend-dot { width:8px; height:8px; border-radius:2px; }
+.timeline-bars { display:flex; align-items:flex-end; gap:5px; height:72px; }
+.tbar-col { flex:1; display:flex; flex-direction:column; gap:2px; height:100%; justify-content:flex-end; }
+.tbar-seg { border-radius:3px; }
+.tbar-lbl { text-align:center; font-size:9px; color:#c0a07a; margin-top:5px; font-weight:700; }
+
+.metrics-layout::-webkit-scrollbar { width:4px; }
+.metrics-layout::-webkit-scrollbar-thumb { background:rgba(200,160,100,0.3); border-radius:2px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// Bridge a Python (pywebview). Devuelve null si no estamos en pywebview.
+function pyApi() {
+  return (typeof window !== 'undefined' && window.pywebview && window.pywebview.api) || null;
+}
+function waitForPyApi(timeoutMs = 3000) {
+  return new Promise(resolve => {
+    if (pyApi()) return resolve(pyApi());
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      if (pyApi()) { clearInterval(iv); resolve(pyApi()); }
+      else if (Date.now() - t0 > timeoutMs) { clearInterval(iv); resolve(null); }
+    }, 100);
+  });
+}
+
+function BrainSVG({ blink, color = '#f4a8b8' }) {
+  return (
+    <svg viewBox="0 0 64 64" width="100%" height="100%" className="brain-svg" style={{position:'absolute',inset:0}}>
+      <defs>
+        <radialGradient id={`bg-${color.slice(1)}`} cx="50%" cy="40%" r="60%">
+          <stop offset="0%" stopColor="#fff" stopOpacity="0.6"/>
+          <stop offset="100%" stopColor={color} stopOpacity="0"/>
+        </radialGradient>
+      </defs>
+      <path d="M20 18 C12 18 8 26 12 32 C8 38 14 46 22 44 C24 50 32 52 36 48 C42 52 52 48 52 40 C58 36 56 26 48 24 C48 16 38 12 32 18 C28 14 22 14 20 18 Z"
+        fill={color} stroke="#c87a8e" strokeWidth="1.2" strokeLinejoin="round"/>
+      <path d="M22 26 Q26 28 24 32 M28 22 Q30 26 28 30 M36 22 Q34 26 36 30 M42 26 Q40 28 42 32 M30 36 Q32 38 34 36"
+        fill="none" stroke="#c87a8e" strokeWidth="1" strokeLinecap="round" opacity="0.55"/>
+      {blink ? (
+        <>
+          <path d="M22 33 Q25 35 28 33" stroke="#3d2c1e" strokeWidth="1.6" fill="none" strokeLinecap="round"/>
+          <path d="M36 33 Q39 35 42 33" stroke="#3d2c1e" strokeWidth="1.6" fill="none" strokeLinecap="round"/>
+        </>
+      ) : (
+        <>
+          <ellipse cx="25" cy="33" rx="2.6" ry="3" fill="#fff"/>
+          <ellipse cx="39" cy="33" rx="2.6" ry="3" fill="#fff"/>
+          <circle cx="25.5" cy="33.5" r="1.4" fill="#3d2c1e"/>
+          <circle cx="39.5" cy="33.5" r="1.4" fill="#3d2c1e"/>
+          <circle cx="26" cy="33" r="0.5" fill="#fff"/>
+          <circle cx="40" cy="33" r="0.5" fill="#fff"/>
+        </>
+      )}
+      <ellipse cx="22" cy="40" rx="2" ry="1.2" fill="#e89aac" opacity="0.6"/>
+      <ellipse cx="42" cy="40" rx="2" ry="1.2" fill="#e89aac" opacity="0.6"/>
+    </svg>
+  );
+}
+
+function BrainMascot({ size = 30 }) {
+  const [blink, setBlink] = useState(false);
+  useEffect(() => {
+    let t;
+    function go() { t = setTimeout(() => { setBlink(true); setTimeout(()=>{ setBlink(false); go(); }, 140); }, 2200 + Math.random()*4000); }
+    go(); return () => clearTimeout(t);
+  }, []);
+  return (
+    <div style={{ position:'relative', width:size, height:size }}>
+      <BrainSVG blink={blink}/>
+    </div>
+  );
+}
+
+function JarBrain({ color, fillPct }) {
+  const [blink, setBlink] = useState(false);
+  useEffect(() => {
+    let t;
+    function go() { t = setTimeout(() => { setBlink(true); setTimeout(()=>{ setBlink(false); go(); }, 120); }, 3000 + Math.random()*5000); }
+    go(); return () => clearTimeout(t);
+  }, []);
+  const W=76,H=82,inner=H-22,fH=inner*fillPct,fY=H-10-fH;
+  return (
+    <div className="jar-brain-wrap">
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} fill="none" style={{position:'absolute',inset:0}}>
+        <rect x="6" y="18" width={W-12} height={H-26} rx="9" fill="#fdf8f0" stroke="rgba(200,160,100,0.3)" strokeWidth="1.5"/>
+        {fH>2 && <rect x="7.5" y={fY} width={W-15} height={fH} rx="5" fill={color} opacity="0.25"/>}
+        {fH>2 && <rect x="7.5" y={fY} width={W-15} height="3.5" rx="2" fill={color} opacity="0.6"/>}
+        <rect x="10" y="9" width={W-20} height="13" rx="4" fill="#ede3d0" stroke="rgba(200,160,100,0.3)" strokeWidth="1.2"/>
+        <rect x="16" y="2" width={W-32} height="9" rx="3" fill="#f5ede0" stroke="rgba(200,160,100,0.2)" strokeWidth="1"/>
+        <rect x="10" y="22" width="4" height={H-30} rx="2" fill="white" opacity="0.4"/>
+      </svg>
+      <div style={{position:'absolute',bottom:14,left:'50%',transform:'translateX(-50%)',width:44,height:36}}>
+        <BrainSVG blink={blink}/>
+      </div>
+    </div>
+  );
+}
+
+function arc(cx, cy, r, s, e) {
+  if (Math.abs(e-s) < 0.001) return '';
+  return `M ${cx+r*Math.cos(s)} ${cy+r*Math.sin(s)} A ${r} ${r} 0 ${e-s>Math.PI?1:0} 1 ${cx+r*Math.cos(e)} ${cy+r*Math.sin(e)}`;
+}
+
+function Ring({ segs, idle }) {
+  const cx=140,cy=140,r=108,sw=38,TAU=2*Math.PI;
+  let a=0;
+  const built = segs.map(s => { const o={...s,s0:a,s1:a+TAU*s.pct}; a=o.s1; return o; });
+  const lblR = r + sw/2 + 24;
+  return (
+    <svg width="280" height="280" className="ring-svg" style={{overflow:'visible'}}>
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke={idle?'#ede3d0':'#e8dfd0'} strokeWidth={sw} strokeDasharray={idle?'5 7':'none'}/>
+      {!idle && built.map((s,i) => {
+        if (s.pct < 0.01) return null;
+        const mid=(s.s0+s.s1)/2, pct=Math.round(s.pct*100);
+        const lx=cx+lblR*Math.cos(mid), ly=cy+lblR*Math.sin(mid);
+        return (
+          <g key={i}>
+            <path d={arc(cx,cy,r,s.s0,s.s1)} fill="none" stroke={s.color} strokeWidth={sw} strokeLinecap="round" opacity="0.95"/>
+            {pct >= 5 && (
+              <g transform={`rotate(90,${cx},${cy})`}>
+                <line x1={cx+(r+sw/2+5)*Math.cos(mid)} y1={cy+(r+sw/2+5)*Math.sin(mid)} x2={cx+(lblR-8)*Math.cos(mid)} y2={cy+(lblR-8)*Math.sin(mid)} stroke={s.color} strokeWidth="1.5" opacity="0.4"/>
+                <rect x={lx-17} y={ly-11} width="34" height="22" rx="11" fill={s.color} opacity="0.13"/>
+                <text x={lx} y={ly+5} textAnchor="middle" fontSize="11" fontWeight="800" fill={s.color} fontFamily="Nunito,sans-serif">{pct}%</text>
+              </g>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+const WORK=25*60, BRK=5*60;
+function usePomodoro() {
+  const [running, setRunning] = useState(false);
+  const [isBreak, setIsBreak] = useState(false);
+  const [secs, setSecs] = useState(WORK);
+  const [done, setDone] = useState(0);
+
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => {
+      setSecs(s => {
+        if (s <= 1) {
+          if (!isBreak) { setIsBreak(true); setSecs(BRK); setDone(d=>d+1); }
+          else { setIsBreak(false); setSecs(WORK); }
+          return s;
+        }
+        return s-1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [running, isBreak]);
+
+  const fmt = s => `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+  function skip() {
+    if (isBreak) { setIsBreak(false); setSecs(WORK); }
+    else { setIsBreak(true); setSecs(BRK); setDone(d=>d+1); }
+  }
+  return { running, setRunning, isBreak, secs, fmt, done, skip,
+    reset: () => { setRunning(false); setIsBreak(false); setSecs(WORK); setDone(0); } };
+}
+
+const STATES=['working','away','social','absent'];
+const CFG = {
+  working:{color:'#5b8a6e',label:'Trabajando',     bg:'rgba(91,138,110,0.12)',  flash:'rgba(91,138,110,0.07)', icon:'💻'},
+  away:   {color:'#e8614a',label:'Distraído',      bg:'rgba(232,97,74,0.12)',   flash:'rgba(232,97,74,0.08)',  icon:'👀'},
+  social: {color:'#f5a623',label:'Redes sociales', bg:'rgba(245,166,35,0.12)',  flash:'rgba(245,166,35,0.08)', icon:'📱'},
+  absent: {color:'#b0a090',label:'Ausente',        bg:'rgba(176,160,144,0.12)', flash:'rgba(176,160,144,0.07)',icon:'😴'},
+};
+
+function useSim(active) {
+  const [state, setState] = useState('working');
+  const [segs, setSegs] = useState({ working:0.62, away:0.12, social:0.09, absent:0.05 });
+  const [flash, setFlash] = useState(false);
+  const prev = useRef('working');
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(() => {
+      const next = STATES[Math.floor(Math.random()*STATES.length)];
+      if (next !== prev.current) { setFlash(true); setTimeout(()=>setFlash(false), 500); }
+      prev.current = next; setState(next);
+      window.dispatchEvent(new CustomEvent('bc-state', { detail: next }));
+      setSegs(p => ({ ...p, [next]: Math.min(p[next]+0.005, 0.9) }));
+    }, 7000);
+    return () => clearInterval(t);
+  }, [active]);
+  return { state, segs, flash };
+}
+
+function CameraDrawer({ open, setOpen, camOn, setCamOn, state, idle }) {
+  const cfg = CFG[state];
+  const fc = state==='away'?'away':state==='social'?'distracted':state==='absent'?'absent':'';
+
+  if (!open) {
+    return (
+      <button className="cam-fab" onClick={()=>setOpen(true)} title="Abrir cámara">
+        <span className="cam-fab-icon">📷</span>
+        <span className="cam-fab-text">Cámara</span>
+        {!idle && camOn && (
+          <>
+            <div className="cam-fab-dot" style={{background:cfg.color}}/>
+            <span className="cam-fab-state" style={{color:cfg.color}}>{cfg.label}</span>
+          </>
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <div className="cam-drawer">
+      <div className="cam-drawer-head">
+        <div className="cam-drawer-title">📷 Detección facial</div>
+        <button className="cam-close-btn" onClick={()=>setOpen(false)}>×</button>
+      </div>
+      <div className="cam-view">
+        {!camOn ? (
+          <div className="cam-off-mini">
+            <span style={{fontSize:18,opacity:0.4}}>📷</span>
+            <span>Cámara apagada</span>
+            <button className="cam-toggle-mini" onClick={()=>setCamOn(true)}>Activar</button>
+          </div>
+        ) : (
+          <div className="cam-live">
+            <div className="cam-scan"/>
+            <div className={`face-box ${fc}`}>
+              <div className="corner tl"/><div className="corner tr"/>
+              <div className="corner bl"/><div className="corner br"/>
+            </div>
+            <div className="rec-dot"/>
+            <div className="cam-label" style={{color:cfg.color}}>{cfg.label}</div>
+          </div>
+        )}
+      </div>
+      {camOn && !idle && (
+        <div className="cam-state-mini" style={{background:cfg.bg, color:cfg.color}}>
+          <span className="cam-state-ic">{cfg.icon}</span>
+          <span style={{flex:1}}>{cfg.label}</span>
+          <button className="cam-close-btn" style={{color:cfg.color}} onClick={()=>setCamOn(false)} title="Apagar cámara">⌽</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MonitorTab() {
+  const pom = usePomodoro();
+  const { state, segs, flash } = useSim(pom.running);
+  const [camOn, setCamOn] = useState(true);
+  const [camOpen, setCamOpen] = useState(false);
+  const [task, setTask] = useState('');
+  const idle = !pom.running && pom.secs === WORK && pom.done === 0;
+  const cfg = CFG[state];
+
+  useEffect(() => {
+    function onKey(e) {
+      if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
+        e.preventDefault();
+        pom.setRunning(r => !r);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const ringSegs = [
+    { color:'#5b8a6e', pct: segs.working },
+    { color:'#e8614a', pct: segs.away },
+    { color:'#f5a623', pct: segs.social },
+    { color:'#b0a090', pct: segs.absent },
+  ];
+
+  const dots = Array.from({length: 4}, (_, i) => {
+    if (i < pom.done % 4) return 'done';
+    if (i === pom.done % 4 && pom.running && !pom.isBreak) return 'current';
+    return 'upcoming';
+  });
+
+  return (
+    <div className="content">
+      <div className="monitor-main">
+        <div className={`state-flash ${flash?'flash':''}`} style={{background: cfg.flash}}/>
+
+        <div className="ring-wrap">
+          <Ring segs={ringSegs} idle={idle}/>
+          {!idle && (
+            <button className="ring-reset" onClick={pom.reset} title="Reiniciar sesión">↺</button>
+          )}
+          <div className="ring-center">
+            {idle ? (
+              <div className="idle-center">
+                <div className="idle-emoji">⏸</div>
+                <div className="idle-title">Sin sesión activa</div>
+                <div className="idle-hint">Pulsa Iniciar o la barra espaciadora</div>
+              </div>
+            ) : (
+              <>
+                <div className={`pom-time ${pom.isBreak?'break':''}`}>{pom.fmt(pom.secs)}</div>
+                <div className="pom-sub">{pom.isBreak ? '☕ Tiempo de descanso' : '⏱ Para el descanso'}</div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="cta-row">
+          <button className={`pom-btn primary ${idle?'idle-cta':''}`} onClick={()=>pom.setRunning(r=>!r)}>
+            {pom.running ? '⏸ Pausar' : idle ? '▶ Iniciar sesión' : '▶ Continuar'}
+            <span className="kbd-hint">Space</span>
+          </button>
+          {!idle && (
+            <button className="pom-btn skip" onClick={pom.skip} title={pom.isBreak?'Saltar descanso':'Saltar pomodoro'}>
+              ⤳ {pom.isBreak ? 'Saltar descanso' : 'Saltar'}
+            </button>
+          )}
+        </div>
+
+        {idle && (
+          <div className="task-input-wrap">
+            <span className="task-input-icon">✏️</span>
+            <input className="task-input" placeholder="¿En qué vas a trabajar?" value={task} onChange={e=>setTask(e.target.value)}/>
+          </div>
+        )}
+
+        <div className="session-history">
+          {dots.map((d,i) => (<div key={i} className={`sess-dot ${d}`}/>))}
+          <span className="sess-cycle">Ciclo {Math.floor(pom.done/4)+1} · {pom.done%4}/4 pomodoros</span>
+        </div>
+      </div>
+
+      <CameraDrawer open={camOpen} setOpen={setCamOpen} camOn={camOn} setCamOn={setCamOn} state={state} idle={idle}/>
+    </div>
+  );
+}
+
+const DEMO_METRICS = [
+  { label:'Tiempo activo',  value:'4h 32m', change:'+12%', dir:'up',     color:'#5b8a6e', fillPct:0.72 },
+  { label:'Distracciones',  value:'23',     change:'-5',   dir:'up',     color:'#e8614a', fillPct:0.38 },
+  { label:'Redes sociales', value:'18m',    change:'+3m',  dir:'down',   color:'#f5a623', fillPct:0.25 },
+  { label:'Ausencias',      value:'2',      change:'=',    dir:'neutral',color:'#b0a090', fillPct:0.12 },
+];
+const DEMO_HOURLY = [
+  {h:'9h', w:0.9,a:0.05,s:0.04,ab:0.01},{h:'10h',w:0.7,a:0.1,s:0.15,ab:0.05},
+  {h:'11h',w:0.8,a:0.1,s:0.05,ab:0.05},{h:'12h',w:0.3,a:0.2,s:0.3,ab:0.2},
+  {h:'13h',w:0.1,a:0.1,s:0.1,ab:0.7},{h:'14h',w:0.6,a:0.2,s:0.1,ab:0.1},
+  {h:'15h',w:0.85,a:0.05,s:0.05,ab:0.05},{h:'16h',w:0.75,a:0.1,s:0.1,ab:0.05},
+  {h:'17h',w:0.5,a:0.2,s:0.2,ab:0.1},
+];
+
+function fmtMins(secs) {
+  const m = Math.round(secs/60);
+  return m >= 60 ? `${Math.floor(m/60)}h ${m%60}m` : `${m}m`;
+}
+
+function MetricsTab() {
+  const [period, setPeriod] = useState('Hoy');
+  const periods = ['Hoy','Semana','Mes'];
+  const [metrics, setMetrics] = useState(DEMO_METRICS);
+  const [hourly, setHourly] = useState(DEMO_HOURLY);
+
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      const api = await waitForPyApi();
+      if (!api || !alive) return;
+      try {
+        const today = await api.get_today_metrics();
+        if (!alive || !today || !today.has_data) return;
+        const t = today.totals_seconds;
+        setMetrics([
+          { label:'Tiempo activo',  value:fmtMins(t.working), change:'',  dir:'neutral', color:'#5b8a6e', fillPct: Math.min(t.working/(8*3600), 1) },
+          { label:'Distracciones',  value:fmtMins(t.away),    change:'',  dir:'neutral', color:'#e8614a', fillPct: Math.min(t.away/(2*3600), 1) },
+          { label:'Redes sociales', value:fmtMins(t.social),  change:'',  dir:'neutral', color:'#f5a623', fillPct: Math.min(t.social/(2*3600), 1) },
+          { label:'Ausencias',      value:fmtMins(t.absent),  change:'',  dir:'neutral', color:'#b0a090', fillPct: Math.min(t.absent/(2*3600), 1) },
+        ]);
+        const hb = await api.get_hourly_breakdown();
+        if (alive && hb && hb.length) setHourly(hb);
+      } catch (err) { console.warn('API error', err); }
+    }
+    load();
+    const iv = setInterval(load, 15000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
+
+  return (
+    <div className="metrics-layout">
+      <div className="metrics-header">
+        <div>
+          <div className="metrics-title">Métricas de productividad</div>
+          <div className="metrics-sub">Sábado 25 de abril · Semana 17</div>
+        </div>
+        <div className="period-tabs">
+          {periods.map(p=>(
+            <div key={p} className={`period-tab ${period===p?'active':''}`} onClick={()=>setPeriod(p)}>{p}</div>
+          ))}
+        </div>
+      </div>
+
+      <div className="streak-card">
+        <div className="streak-emoji">🔥</div>
+        <div className="streak-text">
+          <div className="streak-num">3 días seguidos</div>
+          <div className="streak-label">Tu racha actual · Mejor racha: 7 días</div>
+        </div>
+      </div>
+
+      <div className="jars-grid">
+        {metrics.map((m,i)=>(
+          <div key={i} className="jar-card">
+            <JarBrain color={m.color} fillPct={m.fillPct}/>
+            <div className="jar-label">{m.label}</div>
+            <div className="jar-value">{m.value}</div>
+            <div className={`jar-change ${m.dir}`}>{m.change} vs ayer</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="timeline-card">
+        <div className="timeline-header">
+          <span className="timeline-title">Actividad por hora</span>
+          <div className="tl-legend">
+            {Object.entries(CFG).map(([k,v])=>(
+              <div key={k} className="tl-legend-item"><div className="tl-legend-dot" style={{background:v.color}}/>{v.label}</div>
+            ))}
+          </div>
+        </div>
+        <div className="timeline-bars">
+          {hourly.map((d,i)=>(
+            <div key={i} className="tbar-col">
+              <div style={{flex:1,display:'flex',flexDirection:'column',justifyContent:'flex-end',gap:2}}>
+                {[{p:d.w,c:'#5b8a6e'},{p:d.a,c:'#e8614a'},{p:d.s,c:'#f5a623'},{p:d.ab,c:'#b0a090'}]
+                  .map((s,j)=>s.p>0.02 && <div key={j} className="tbar-seg" style={{height:`${s.p*100}%`,background:s.c,opacity:0.78}}/>)}
+              </div>
+              <div className="tbar-lbl">{d.h}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [tab, setTab] = useState('monitor');
+  const [globalState, setGlobalState] = useState('working');
+  const [score, setScore] = useState({ pct: 72, mins: 272 });
+  const fmtTime = m => m >= 60 ? `${Math.floor(m/60)}h ${m%60}m` : `${m}m`;
+  const scoreColor = score.pct >= 70 ? '#5b8a6e' : score.pct >= 50 ? '#f5a623' : '#e8614a';
+  const mascotColor = CFG[globalState]?.color || '#5b8a6e';
+  const mascotLabel = CFG[globalState]?.label || 'Trabajando';
+
+  useEffect(() => {
+    function onState(e) { if (e.detail) setGlobalState(e.detail); }
+    window.addEventListener('bc-state', onState);
+    return () => window.removeEventListener('bc-state', onState);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      const api = await waitForPyApi();
+      if (!api || !alive) return;
+      try {
+        const t = await api.get_today_metrics();
+        if (alive && t && t.has_data) setScore({ pct: t.score_pct, mins: t.active_minutes });
+      } catch (err) { /* ignore */ }
+    }
+    load();
+    const iv = setInterval(load, 15000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
+
+  return (
+    <div className="window">
+      <div className="titlebar">
+        <div className="traffic-lights">
+          <div className="tl tl-red"/><div className="tl tl-yellow"/><div className="tl tl-green"/>
+        </div>
+        <div className="tb-brand">
+          <div className="tb-brand-mascot" style={{'--mascot-state': mascotColor}} title={`Estado: ${mascotLabel}`}>
+            <BrainMascot size={30}/>
+          </div>
+          <span className="tb-brand-name">BrainCode</span>
+        </div>
+        <div className="tb-score-chip">
+          <div className="tb-score-circle" style={{background: scoreColor}}>{score.pct}</div>
+          <span className="tb-score-label">Hoy</span>
+          <span className="tb-score-time">{fmtTime(score.mins)}</span>
+          <div className="tb-score-sep"/>
+          <span className="tb-score-streak">🔥 3</span>
+        </div>
+        <button className="tb-icon-btn" title="Notificaciones">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        </button>
+        <button className="tb-icon-btn" title="Ajustes">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+
+      <div className="tabbar">
+        <div className={`tab ${tab==='monitor'?'active':''}`} onClick={()=>setTab('monitor')}>Monitor</div>
+        <div className={`tab ${tab==='metrics'?'active':''}`} onClick={()=>setTab('metrics')}>Métricas</div>
+      </div>
+
+      {tab==='monitor' && <MonitorTab/>}
+      {tab==='metrics' && <MetricsTab/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
