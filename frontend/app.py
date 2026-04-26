@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 import webview
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -104,7 +105,7 @@ def launch():
     api = Api()
     webview.create_window(
         "BrainCode",
-        f"file://{INDEX_HTML}",
+        Path(INDEX_HTML).as_uri(),
         js_api=api,
         width=940,
         height=660,
