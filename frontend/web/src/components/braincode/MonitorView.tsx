@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { Pause, Play, RotateCcw, SkipForward, X } from "lucide-react";
 import { BrainMascot } from "./BrainMascot";
 import { Ring } from "./Ring";
 import { SessionSetup } from "./SessionSetup";
@@ -75,7 +76,6 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
           </>
         ) : pom.completed ? (
           <>
-            <div className="bc-done-emoji" style={{ fontSize: 28 }}>🎉</div>
             <div className="bc-done-title">¡Sesión completada!</div>
             <div className="bc-done-metrics">
               {[
@@ -114,21 +114,37 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
       ) : pom.completed ? (
         <div className="bc-controls bc-controls-done" style={{ position: "relative" }}>
           <Sparkles />
-          <button className="bc-ctrl-btn pp bc-done-btn" onClick={pom.reset}>↺ Nueva sesión</button>
+          <button className="bc-ctrl-btn pp bc-done-btn" onClick={pom.reset}>
+            <RotateCcw size={14} strokeWidth={1.75} />
+            <span>Nueva sesión</span>
+          </button>
         </div>
       ) : (
         <div className="bc-controls">
           <div className="bc-ctrl-row">
             <button className="bc-ctrl-btn pp" onClick={() => pom.setRunning(!pom.running)} disabled={pom.completed}>
-              {pom.running ? "⏸ Pausar" : "▶ Continuar"}
+              {pom.running ? (
+                <>
+                  <Pause size={14} strokeWidth={2} fill="currentColor" />
+                  <span>Pausar</span>
+                </>
+              ) : (
+                <>
+                  <Play size={14} strokeWidth={2} fill="currentColor" />
+                  <span>Continuar</span>
+                </>
+              )}
               <span className="bc-kbd">Space</span>
             </button>
             {!isFreeflow && (
-              <button className="bc-ctrl-btn sec" onClick={pom.skip} title={pom.isBreak ? "Saltar descanso" : "Saltar pomodoro"}>
-                ⤳ Saltar
+              <button className="bc-ctrl-btn sec" onClick={pom.skip} title={pom.isBreak ? "Saltar descanso" : "Saltar pomodoro"} aria-label="Saltar">
+                <SkipForward size={14} strokeWidth={1.75} />
+                <span>Saltar</span>
               </button>
             )}
-            <button className="bc-ctrl-btn dng" onClick={pom.reset} title="Terminar sesión">✕</button>
+            <button className="bc-ctrl-btn dng" onClick={pom.reset} title="Terminar sesión" aria-label="Terminar sesión">
+              <X size={14} strokeWidth={1.75} />
+            </button>
           </div>
           {!isFreeflow && (
             <div className="bc-pom-dots">

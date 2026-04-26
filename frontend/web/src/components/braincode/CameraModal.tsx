@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import { CFG, type BCState } from "./state";
 
 interface CameraModalProps {
@@ -11,6 +12,7 @@ interface CameraModalProps {
 export function CameraModal({ open, setOpen, camOn, setCamOn, state }: CameraModalProps) {
   if (!open) return null;
   const cfg = CFG[state];
+  const StateIcon = cfg.Icon;
   const fc = state === "away" ? "away" : state === "social" ? "distracted" : state === "absent" ? "absent" : "";
   return (
     <div
@@ -22,7 +24,9 @@ export function CameraModal({ open, setOpen, camOn, setCamOn, state }: CameraMod
       <div className="bc-cam-modal">
         <div className="bc-cam-head">
           <div className="bc-cam-title">Detección facial</div>
-          <button className="bc-cam-x" onClick={() => setOpen(false)}>×</button>
+          <button className="bc-cam-x" onClick={() => setOpen(false)} aria-label="Cerrar">
+            <X size={14} strokeWidth={1.75} />
+          </button>
         </div>
         <div className="bc-cam-feed">
           {!camOn ? (
@@ -43,7 +47,7 @@ export function CameraModal({ open, setOpen, camOn, setCamOn, state }: CameraMod
         </div>
         {camOn && (
           <div className="bc-cam-state-bar" style={{ background: cfg.bg, color: cfg.hex }}>
-            <span>{cfg.icon}</span>
+            <StateIcon size={14} strokeWidth={1.5} />
             <span style={{ flex: 1, fontWeight: 600 }}>{cfg.label}</span>
             <button className="bc-cam-off-btn" onClick={() => setCamOn(false)}>Apagar</button>
           </div>

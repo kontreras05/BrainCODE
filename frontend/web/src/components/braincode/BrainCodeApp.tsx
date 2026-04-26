@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
+import { Activity, BarChart3, Bell, Camera, FlaskConical, Settings } from "lucide-react";
 import { MonitorView } from "./MonitorView";
 import { MetricsView } from "./MetricsView";
 import { JarsView } from "./JarsView";
 import { CameraModal } from "./CameraModal";
 import { CFG, type BCState } from "./state";
+
+const ICON_STROKE = 1.5;
+const ICON_NAV = 16;
 
 type Tab = "monitor" | "metrics" | "jars";
 
@@ -51,33 +55,20 @@ export function BrainCodeApp() {
 
           <nav className="bc-nav">
             {([
-              { id: "monitor" as const, icon: "◎", label: "Monitor" },
-              { id: "metrics" as const, icon: "≡", label: "Métricas" },
-              {
-                id: "jars" as const,
-                icon: (
-                  <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="2.5" y="5.5" width="9" height="7" rx="2.5" />
-                    <rect x="3.5" y="3" width="7" height="3" rx="1.5" />
-                    <line x1="5.5" y1="3" x2="5.5" y2="5.5" />
-                    <line x1="8.5" y1="3" x2="8.5" y2="5.5" />
-                  </svg>
-                ),
-                label: "Jars",
-              },
+              { id: "monitor" as const, Icon: Activity, label: "Monitor" },
+              { id: "metrics" as const, Icon: BarChart3, label: "Métricas" },
+              { id: "jars" as const, Icon: FlaskConical, label: "Jars" },
             ]).map((n) => (
               <button key={n.id} className={`bc-nav-btn${tab === n.id ? " active" : ""}`} onClick={() => setTab(n.id)}>
-                <span className="bc-nav-icon">{n.icon}</span>
+                <span className="bc-nav-icon">
+                  <n.Icon size={ICON_NAV} strokeWidth={ICON_STROKE} />
+                </span>
                 {n.label}
               </button>
             ))}
             <button className="bc-nav-btn" onClick={() => setCamOpen(!camOpen)}>
               <span className="bc-nav-icon">
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
-                  <rect x="1" y="4" width="14" height="10" rx="2.5" />
-                  <circle cx="8" cy="9" r="2.5" />
-                  <path d="M5.5 4L6.8 2H9.2L10.5 4" />
-                </svg>
+                <Camera size={ICON_NAV} strokeWidth={ICON_STROKE} />
               </span>
               Cámara
             </button>
@@ -89,7 +80,9 @@ export function BrainCodeApp() {
               <span>{camOn ? cfg.label : "Cámara apagada"}</span>
             </button>
             <button className="bc-cam-status" style={{ opacity: 0.45, cursor: "default", pointerEvents: "none" }}>
-              <span className="bc-nav-icon" style={{ fontSize: 13 }}>⚙</span>
+              <span className="bc-nav-icon">
+                <Settings size={ICON_NAV} strokeWidth={ICON_STROKE} />
+              </span>
               <span>Ajustes</span>
             </button>
           </div>
@@ -105,10 +98,7 @@ export function BrainCodeApp() {
               {tab === "monitor" ? "· Detección en tiempo real" : tab === "metrics" ? "· Sáb 25 abril" : "· Historial de sesiones"}
             </span>
             <button className="bc-icon-btn" title="Notificaciones" aria-label="Notificaciones">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 01-3.46 0" />
-              </svg>
+              <Bell size={16} strokeWidth={ICON_STROKE} />
             </button>
           </div>
 
