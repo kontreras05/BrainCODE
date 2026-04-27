@@ -216,19 +216,46 @@ class FocusTracker:
         self._gaze_vote_buffer = deque(maxlen=self._gaze_vote_window)
 
     @staticmethod
+    def _get_camera_names_windows() -> list:
+        """Use PowerShell + WMI to get real camera device names on Windows."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-CimInstance Win32_PnPEntity | "
+                 "Where-Object { $_.PNPClass -eq 'Camera' -or $_.PNPClass -eq 'Image' } | "
+                 "Select-Object -ExpandProperty Name"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            if result.returncode == 0:
+                names = [n.strip() for n in result.stdout.strip().split('\n') if n.strip()]
+                return names
+        except Exception as e:
+            print(f"[list_cameras] WMI query failed: {e}")
+        return []
+
+    @staticmethod
     def list_cameras(max_index: int = 5) -> list:
         """Probe camera indices 0..max_index-1 and return available cameras.
-        Uses DirectShow (CAP_DSHOW) on Windows for near-instant probing."""
+        Uses DirectShow (CAP_DSHOW) on Windows for near-instant probing.
+        Resolves real device names via WMI on Windows."""
         import platform
-        backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
+        is_windows = platform.system() == "Windows"
+        backend = cv2.CAP_DSHOW if is_windows else cv2.CAP_ANY
+
+        # Get real device names from WMI (ordered as Windows enumerates them)
+        device_names = FocusTracker._get_camera_names_windows() if is_windows else []
+
         available = []
         for idx in range(max_index):
             cap = cv2.VideoCapture(idx, backend)
             if cap.isOpened():
-                # Get camera name if available via backend property
+                # Map by position: WMI order generally matches DirectShow index
+                name = device_names[idx] if idx < len(device_names) else f"Cámara {idx}"
                 available.append({
                     "index": idx,
-                    "name": f"Cámara {idx}",
+                    "name": name,
                 })
                 cap.release()
         return available

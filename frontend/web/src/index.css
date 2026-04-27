@@ -925,7 +925,7 @@
   animation: bc-fade-in 0.25s ease-out both;
 }
 .bc-calib-card {
-  width: min(420px, 86%);
+  width: min(680px, 92%);
   padding: var(--space-3);
   background: var(--bc-surface);
   border: 1px solid var(--bc-border);
@@ -995,7 +995,7 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--bc-border);
   box-shadow: 0 20px 60px oklch(0% 0 0 / 0.22);
-  overflow: hidden;
+  overflow: visible;
   animation: bc-up 0.25s ease-out both;
 }
 .bc-settings-head {
@@ -1080,17 +1080,18 @@
 }
 
 .bc-settings-options {
-  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  position: absolute; bottom: calc(100% + 4px); left: 0; right: 0;
   background: var(--bc-surface);
   border: 1.5px solid var(--bc-border-2);
   border-radius: var(--radius-sm);
-  box-shadow: 0 8px 24px oklch(0% 0 0 / 0.12);
+  box-shadow: 0 -8px 24px oklch(0% 0 0 / 0.12);
   z-index: 10;
   padding: var(--space-0);
-  animation: bc-up 0.15s ease-out;
+  animation: bc-drop-down 0.15s ease-out;
   max-height: 192px;
   overflow-y: auto;
 }
+@keyframes bc-drop-down { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: translateY(0) } }
 .bc-settings-options::-webkit-scrollbar { width: 4px; }
 .bc-settings-options::-webkit-scrollbar-thumb { background: var(--bc-border-2); border-radius: 2px; }
 
