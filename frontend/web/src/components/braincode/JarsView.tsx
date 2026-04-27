@@ -29,7 +29,7 @@ function JarItem({ session }: { session: Session }) {
       <div className="bc-jar-svg-wrap">
         <JarSVG color={c} fillPct={session.score / 100} />
         <div style={{ position: "absolute", bottom: 30, left: "50%", transform: "translateX(-50%)", flexShrink: 0 }}>
-          <BrainMascot size={56} color={c} />
+          <BrainMascot size={56} color={c} state="completed" />
         </div>
       </div>
       <div className="bc-jar-item-label">{session.label}</div>

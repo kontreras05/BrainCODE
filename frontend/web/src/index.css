@@ -40,6 +40,24 @@
   /* Iconography stroke (Lucide) */
   --icon-stroke: 1.5;
 
+  /* ── MOTION SYSTEM ────────────────────────────────────────────
+     Easings: --ease-out for entrances/transitions, --ease-pop
+     for celebratory bounces, --ease-in for exits.
+     Durations rise in semantic steps; --dur-state is reserved
+     for the brain mascot's emotional cross-fade (slow on purpose
+     so the user reads the change, not just sees it). */
+  --ease-out:    var(--ease-out);
+  --ease-pop:    var(--ease-pop);
+  --ease-in:     cubic-bezier(0.4, 0, 1, 1);
+
+  --dur-instant: 100ms;
+  --dur-fast:    150ms;
+  --dur-base:    250ms;
+  --dur-slow:    500ms;
+  --dur-state:   900ms;
+
+  --stagger:      60ms;
+
   /* BrainCode palette (OKLCH) */
   --bc-bg:         oklch(95.5% 0.014 62);
   --bc-surface:    oklch(99.2% 0.005 58);
@@ -137,28 +155,27 @@
   box-sizing: border-box;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .bc-app, .bc-app * {
+    animation-duration: var(--dur-fast) !important;
+    transition-duration: var(--dur-fast) !important;
+  }
+  .bc-brain-float, .bc-brain-shadow { animation: none !important; }
+}
+
 .bc-app {
   width: 100%;
   min-height: 100vh;
   background: var(--bc-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
   font-family: 'Space Grotesk', sans-serif;
   overflow: hidden;
-  padding: var(--space-2);
 }
 
-/* WINDOW */
+/* WINDOW — edge-to-edge: no fake floating chrome */
 .bc-window {
-  width: 960px;       /* 8×120 */
-  height: 640px;      /* 8×80 */
-  max-width: 100%;
+  width: 100%;
+  height: 100vh;
   background: var(--bc-surface);
-  border-radius: var(--radius-md);
-  box-shadow:
-    0 32px 80px oklch(10% 0.03 55 / 0.26),
-    0 0 0 1px oklch(80% 0.02 60 / 0.45);
   display: flex;
   overflow: hidden;
 }
@@ -182,11 +199,6 @@
   user-select: none;
   flex-shrink: 0;
 }
-.bc-tls { display: flex; gap: var(--space-0); }
-.bc-tl { width: 12px; height: 12px; border-radius: 50%; }  /* mac control = type-scale unit */
-.bc-tl-r { background: #ff5f57; }
-.bc-tl-y { background: #febc2e; }
-.bc-tl-g { background: #28c840; }
 .bc-brand {
   font-size: 13px;
   font-weight: 700;
@@ -194,6 +206,13 @@
   letter-spacing: 0.01em;
 }
 .bc-brand em { font-style: normal; color: var(--bc-green-glow); font-weight: 700; }
+.bc-sync-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--bc-green-glow);
+  margin-left: auto;
+  box-shadow: 0 0 8px oklch(68% 0.13 155 / 0.6);
+  animation: bc-blink 2.4s ease-in-out infinite;
+}
 
 .bc-orb-wrap {
   padding: var(--space-2);
@@ -224,7 +243,7 @@
   color: oklch(58% 0.02 60);
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px; font-weight: 500;
-  transition: all 0.15s;
+  transition: all var(--dur-fast) var(--ease-out);
 }
 .bc-nav-btn:hover { background: var(--bc-sidebar-2); color: oklch(80% 0.015 60); }
 .bc-nav-btn.active { background: var(--bc-sidebar-3); color: oklch(91% 0.01 60); }
@@ -243,11 +262,11 @@
   font-family: 'Space Grotesk', sans-serif;
   font-size: 12px; font-weight: 500;
   color: oklch(56% 0.02 60);
-  transition: all 0.15s;
+  transition: all var(--dur-fast) var(--ease-out);
   text-align: left;
 }
 .bc-cam-status:hover { background: var(--bc-sidebar-2); color: oklch(74% 0.015 60); }
-.bc-cam-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; transition: background 0.3s; }
+.bc-cam-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; transition: background var(--dur-base) var(--ease-out); }
 .bc-cam-dot.live { animation: bc-blink 2s infinite; }
 @keyframes bc-blink { 0%,100% { opacity: 1 } 50% { opacity: 0.35 } }
 
@@ -258,13 +277,13 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  animation: bc-tab-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: bc-tab-in var(--dur-slow) var(--ease-out) both;
 }
 @keyframes bc-tab-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.bc-nav-btn { transition: background 0.25s ease, color 0.25s ease, transform 0.2s ease; }
+.bc-nav-btn { transition: background var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); }
 .bc-main-bar {
   height: var(--space-6); display: flex; align-items: center;
   padding: 0 var(--space-3); gap: var(--space-1);
@@ -278,7 +297,7 @@
   display: flex; align-items: center; justify-content: center;
   background: transparent; border: none; cursor: pointer;
   color: var(--bc-text-muted);
-  transition: all 0.15s;
+  transition: all var(--dur-fast) var(--ease-out);
   margin-left: auto;
 }
 .bc-icon-btn:hover { background: var(--bc-surface-2); color: var(--bc-text); }
@@ -360,7 +379,7 @@
 .bc-brain-stage {
   position: relative;
   transform: scale(1) translateY(0);
-  transition: transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform var(--dur-state) var(--ease-out);
   will-change: transform;
 }
 .bc-brain-float {
@@ -397,14 +416,15 @@
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.bc-monitor:not(.welcome) .bc-timer       { animation: bc-fade-up 0.5s ease 1.3s both; }
-.bc-monitor:not(.welcome) .bc-timer-lbl   { animation: bc-fade-up 0.5s ease 1.45s both; }
-.bc-monitor:not(.welcome) .bc-state-chip  { animation: bc-fade-up 0.5s ease 1.6s both; }
-.bc-monitor:not(.welcome) .bc-controls    { animation: bc-fade-up 0.55s ease 1.75s both; }
-.bc-monitor:not(.welcome) .bc-pom-dots    { animation: bc-fade-up 0.5s ease 1.9s both; }
+.bc-monitor:not(.welcome) .bc-timer       { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 0) both; }
+.bc-monitor:not(.welcome) .bc-timer-lbl   { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 1) both; }
+.bc-monitor:not(.welcome) .bc-state-chip  { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 2) both; }
+.bc-monitor:not(.welcome) .bc-controls    { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 3) both; }
+.bc-monitor:not(.welcome) .bc-pom-dots    { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 4) both; }
 /* Override controls animation when in completed state for a quicker entrance */
-.bc-controls-done { animation: bc-fade-up 0.55s ease 1.05s both !important; margin-top: var(--space-2) !important; }
-.bc-done-btn { animation: bc-done-btn-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.45s both; }
+.bc-controls-done { animation: bc-fade-up var(--dur-slow) var(--ease-out) 1.05s both !important; margin-top: var(--space-2) !important; }
+.bc-done-btn { animation: bc-done-btn-in 0.6s var(--ease-pop) 0.45s both; }
+.bc-done-title { animation: bc-fade-up var(--dur-slow) var(--ease-out) 0.25s both; }
 @keyframes bc-done-btn-in {
   0%   { opacity: 0; transform: translateY(12px) scale(0.85); box-shadow: 0 0 0 oklch(52% 0.13 155 / 0); }
   60%  { opacity: 1; transform: translateY(-2px) scale(1.04); }
@@ -413,7 +433,7 @@
 
 /* ─── COMPLETED STATE: compact, ordered timer → completion transition ─── */
 .bc-ring-seg {
-  transition: opacity 0.9s cubic-bezier(0.22, 1, 0.36, 1), stroke-width 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity var(--dur-state) var(--ease-out), stroke-width var(--dur-state) var(--ease-out);
 }
 .bc-monitor.completed {
   justify-content: flex-start;
@@ -424,13 +444,13 @@
   transform: scale(0.82);
   transform-origin: top center;
   margin-bottom: -56px;          /* 8×7 */
-  transition: transform 0.85s cubic-bezier(0.22, 1, 0.36, 1), margin-bottom 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform var(--dur-state) var(--ease-out), margin-bottom var(--dur-state) var(--ease-out);
 }
 .bc-monitor.completed .bc-ring-seg {
   opacity: 0;
 }
 .bc-monitor.completed .bc-ring-track {
-  transition: stroke 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: stroke var(--dur-state) var(--ease-out);
   stroke: oklch(88% 0.09 155);
 }
 .bc-monitor.completed .bc-brain-stage {
@@ -524,7 +544,7 @@
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px; font-weight: 600;
   color: var(--bc-text);
-  transition: all 0.2s;
+  transition: all var(--dur-base) var(--ease-out);
   box-shadow: 0 2px 6px oklch(0% 0 0 / 0.05);
 }
 .bc-mode-btn:hover {
@@ -566,7 +586,7 @@
   padding: var(--space-1) var(--space-2); border-radius: var(--radius-pill);
   font-family: 'Space Grotesk', sans-serif;
   font-size: 12px; font-weight: 700; cursor: pointer;
-  transition: all 0.2s; white-space: nowrap;
+  transition: all var(--dur-base) var(--ease-out); white-space: nowrap;
 }
 .bc-cfg-go:hover { background: oklch(48% 0.13 155); transform: translateY(-1px); }
 .bc-cfg-go:focus-visible { outline: 2px solid var(--bc-green); outline-offset: 2px; }
@@ -582,7 +602,7 @@
   padding: var(--space-1) var(--space-3); border-radius: var(--radius-pill);
   border: none; cursor: pointer;
   font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px; font-weight: 700; transition: all 0.2s;
+  font-size: 13px; font-weight: 700; transition: all var(--dur-base) var(--ease-out);
 }
 .bc-ctrl-btn.pp {
   background: var(--bc-green); color: #fff;
@@ -642,7 +662,7 @@
   background: var(--bc-surface-2);
   font-size: 12px;
   opacity: 0;
-  animation: bc-fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: bc-fade-up 0.5s var(--ease-out) both;
 }
 .bc-done-metric-dot {
   width: 8px; height: 8px; border-radius: 50%;
@@ -748,7 +768,7 @@
   padding: var(--space-0) var(--space-1); border-radius: var(--radius-pill); cursor: pointer;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 11px; font-weight: 600;
-  margin-left: auto; transition: all 0.15s;
+  margin-left: auto; transition: all var(--dur-fast) var(--ease-out);
 }
 .bc-cam-off-btn:hover { border-color: var(--bc-border-2); color: var(--bc-text-mid); }
 
@@ -772,7 +792,7 @@
 .bc-period {
   padding: var(--space-0) var(--space-2); border-radius: var(--radius-pill);
   font-size: 11px; font-weight: 600;
-  color: var(--bc-text-muted); cursor: pointer; transition: all 0.15s;
+  color: var(--bc-text-muted); cursor: pointer; transition: all var(--dur-fast) var(--ease-out);
 }
 .bc-period.on { background: var(--bc-surface); color: var(--bc-green); box-shadow: 0 1px 4px oklch(0% 0 0 / 0.08); }
 
@@ -804,7 +824,7 @@
   border: 1px solid var(--bc-border); border-radius: var(--radius-md);
   padding: var(--space-2);
   display: flex; flex-direction: column; gap: var(--space-1);
-  transition: all 0.2s; cursor: default;
+  transition: all var(--dur-base) var(--ease-out); cursor: default;
 }
 .bc-stat-card:hover {
   border-color: var(--bc-border-2);
@@ -881,3 +901,229 @@
 .bc-cam-log-title { font-size: 10px; font-weight: 700; color: var(--bc-text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 2px; }
 .bc-cam-log-row { display: flex; align-items: center; gap: var(--space-1); font-size: 11px; color: var(--bc-text-muted); }
 .bc-cam-log-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Live MJPEG feed inside CameraModal ────────────────────────── */
+.bc-cam-feed-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: #0a0806;
+}
+
+/* ── Calibration overlay (sits on top of MonitorView) ──────────── */
+.bc-calib-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 90;
+  background: oklch(20% 0.01 60 / 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: bc-fade-in 0.25s ease-out both;
+}
+.bc-calib-card {
+  width: min(420px, 86%);
+  padding: var(--space-3);
+  background: var(--bc-surface);
+  border: 1px solid var(--bc-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 20px 60px oklch(0% 0 0 / 0.35);
+  display: flex; flex-direction: column; gap: var(--space-2);
+}
+.bc-calib-head {
+  display: flex; align-items: center; gap: var(--space-1);
+  font-size: 11px; font-weight: 700; color: var(--bc-text-muted);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.bc-calib-preview {
+  width: 100%;
+  aspect-ratio: 4/3;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #0a0806;
+  border: 1px solid oklch(100% 0 0 / 0.06);
+}
+.bc-calib-preview-img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.bc-calib-title {
+  font-size: 18px; font-weight: 700; color: var(--bc-text);
+  text-align: center; margin-top: var(--space-1);
+}
+.bc-calib-hint {
+  font-size: 12px; color: var(--bc-text-muted);
+  text-align: center; line-height: 1.4;
+}
+.bc-calib-progress {
+  position: relative;
+  height: 8px;
+  background: var(--bc-surface-2);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  margin-top: var(--space-1);
+}
+.bc-calib-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, oklch(70% 0.18 195), oklch(72% 0.16 165));
+  transition: width 0.2s ease-out;
+}
+.bc-calib-progress-num {
+  position: absolute; top: 12px; right: 0;
+  font-size: 11px; font-weight: 600; color: var(--bc-text-muted);
+}
+.bc-calib-cta {
+  margin-top: var(--space-1);
+  align-self: center;
+}
+@keyframes bc-fade-in { from { opacity: 0 } to { opacity: 1 } }
+
+/* SETTINGS MODAL */
+.bc-settings-modal-wrap {
+  position: absolute; inset: 0; z-index: 110;
+  display: flex; align-items: center; justify-content: center;
+  background: oklch(20% 0.01 60 / 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: bc-fade-in 0.2s ease-out both;
+}
+.bc-settings-modal {
+  width: 320px;
+  background: var(--bc-surface);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--bc-border);
+  box-shadow: 0 20px 60px oklch(0% 0 0 / 0.22);
+  overflow: hidden;
+  animation: bc-up 0.25s ease-out both;
+}
+.bc-settings-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-2); border-bottom: 1px solid var(--bc-border);
+}
+.bc-settings-title {
+  font-size: 14px; font-weight: 700; color: var(--bc-text);
+  letter-spacing: -0.01em;
+}
+.bc-settings-section {
+  padding: var(--space-2);
+}
+.bc-settings-section-head {
+  display: flex; align-items: center; gap: var(--space-1);
+  font-size: 11px; font-weight: 700; color: var(--bc-text-muted);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  margin-bottom: var(--space-1);
+}
+.bc-settings-refresh {
+  margin-left: auto;
+  width: 24px; height: 24px;
+  border: none; background: transparent; border-radius: var(--radius-sm);
+  cursor: pointer; color: var(--bc-text-muted);
+  display: flex; align-items: center; justify-content: center;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.bc-settings-refresh:hover { background: var(--bc-surface-2); color: var(--bc-text-mid); }
+.bc-settings-refresh:disabled { opacity: 0.4; cursor: default; }
+.bc-spin { animation: bc-spin-anim 0.8s linear infinite; }
+@keyframes bc-spin-anim { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+
+.bc-settings-loading {
+  display: flex; align-items: center; gap: var(--space-1);
+  padding: var(--space-2);
+  font-size: 12px; color: var(--bc-text-muted); font-weight: 500;
+  justify-content: center;
+}
+.bc-settings-empty {
+  padding: var(--space-2);
+  font-size: 12px; color: var(--bc-text-muted); font-weight: 500;
+  text-align: center;
+}
+
+/* Custom dropdown */
+.bc-settings-dropdown-wrap {
+  position: relative;
+}
+.bc-settings-select {
+  display: flex; align-items: center; gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 1.5px solid var(--bc-border-2);
+  border-radius: var(--radius-sm);
+  background: var(--bc-surface-2);
+  cursor: pointer;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 13px; font-weight: 600;
+  color: var(--bc-text);
+  transition: all var(--dur-fast) var(--ease-out);
+  text-align: left;
+}
+.bc-settings-select:hover { border-color: var(--bc-green); }
+.bc-settings-select.open { border-color: var(--bc-green); box-shadow: 0 0 0 3px oklch(52% 0.13 155 / 0.12); }
+.bc-settings-select:disabled { opacity: 0.55; cursor: default; }
+.bc-settings-select-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: var(--bc-green);
+  box-shadow: 0 0 6px oklch(52% 0.13 155 / 0.5);
+  animation: bc-blink 2s infinite;
+}
+.bc-settings-select-text {
+  flex: 1;
+}
+.bc-settings-chevron {
+  transition: transform var(--dur-fast) var(--ease-out);
+  color: var(--bc-text-muted);
+  flex-shrink: 0;
+}
+.bc-settings-chevron.flip {
+  transform: rotate(180deg);
+}
+
+.bc-settings-options {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: var(--bc-surface);
+  border: 1.5px solid var(--bc-border-2);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px oklch(0% 0 0 / 0.12);
+  z-index: 10;
+  padding: var(--space-0);
+  animation: bc-up 0.15s ease-out;
+  max-height: 192px;
+  overflow-y: auto;
+}
+.bc-settings-options::-webkit-scrollbar { width: 4px; }
+.bc-settings-options::-webkit-scrollbar-thumb { background: var(--bc-border-2); border-radius: 2px; }
+
+.bc-settings-option {
+  display: flex; align-items: center; gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-1) var(--space-1);
+  border: none; background: transparent; border-radius: var(--space-0);
+  cursor: pointer;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 12px; font-weight: 500;
+  color: var(--bc-text-mid);
+  transition: all var(--dur-fast) var(--ease-out);
+  text-align: left;
+}
+.bc-settings-option:hover { background: var(--bc-surface-2); color: var(--bc-text); }
+.bc-settings-option.active { color: var(--bc-green); font-weight: 600; }
+.bc-settings-opt-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  border: 1.5px solid var(--bc-border-2);
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.bc-settings-option.active .bc-settings-opt-dot {
+  background: var(--bc-green);
+  border-color: var(--bc-green);
+  box-shadow: 0 0 4px oklch(52% 0.13 155 / 0.5);
+}
+.bc-settings-opt-badge {
+  margin-left: auto;
+  font-size: 10px; font-weight: 700;
+  padding: 2px var(--space-1);
+  border-radius: var(--radius-pill);
+  background: oklch(52% 0.13 155 / 0.1);
+  color: var(--bc-green);
+  letter-spacing: 0.02em;
+}

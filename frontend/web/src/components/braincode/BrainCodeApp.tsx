@@ -4,6 +4,7 @@ import { MonitorView } from "./MonitorView";
 import { MetricsView } from "./MetricsView";
 import { JarsView } from "./JarsView";
 import { CameraModal } from "./CameraModal";
+import { SettingsModal } from "./SettingsModal";
 import { CFG, type BCState } from "./state";
 
 const ICON_STROKE = 1.5;
@@ -16,6 +17,7 @@ export function BrainCodeApp() {
   const [globalState, setGlobalState] = useState<BCState>("working");
   const [camOn, setCamOn] = useState(true);
   const [camOpen, setCamOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     const onState = (e: Event) => {
@@ -34,12 +36,8 @@ export function BrainCodeApp() {
         {/* SIDEBAR */}
         <div className="bc-sidebar">
           <div className="bc-sb-titlebar">
-            <div className="bc-tls">
-              <div className="bc-tl bc-tl-r" />
-              <div className="bc-tl bc-tl-y" />
-              <div className="bc-tl bc-tl-g" />
-            </div>
             <span className="bc-brand">Brain<em>CODE</em></span>
+            <span className="bc-sync-dot" aria-hidden />
           </div>
 
           <div className="bc-orb-wrap">
@@ -79,7 +77,7 @@ export function BrainCodeApp() {
               <div className={`bc-cam-dot${camOn ? " live" : ""}`} style={{ background: camOn ? cfg.hex : "oklch(45% 0.02 60)" }} />
               <span>{camOn ? cfg.label : "Cámara apagada"}</span>
             </button>
-            <button className="bc-cam-status" style={{ opacity: 0.45, cursor: "default", pointerEvents: "none" }}>
+            <button className="bc-cam-status" onClick={() => setSettingsOpen(!settingsOpen)}>
               <span className="bc-nav-icon">
                 <Settings size={ICON_NAV} strokeWidth={ICON_STROKE} />
               </span>
@@ -112,6 +110,11 @@ export function BrainCodeApp() {
           {camOpen && tab !== "monitor" && (
             <div style={{ position: "absolute", inset: 0, zIndex: 100 }}>
               <CameraModal open={camOpen} setOpen={setCamOpen} camOn={camOn} setCamOn={setCamOn} state={globalState} />
+            </div>
+          )}
+          {settingsOpen && (
+            <div style={{ position: "absolute", inset: 0, zIndex: 110 }}>
+              <SettingsModal open={settingsOpen} setOpen={setSettingsOpen} />
             </div>
           )}
         </div>

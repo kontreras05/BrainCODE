@@ -25,7 +25,7 @@ export function Ring({ segs, idle }: RingProps) {
     a = o.s1;
     return o;
   });
-  const track = idle ? "oklch(89% 0.016 62)" : "oklch(91% 0.014 62)";
+  const track = idle ? "oklch(89% 0.016 62)" : "oklch(89% 0.014 62)";
   const tickOuter = r + sw / 2 + 22;
   const tickColor = "oklch(60% 0.02 62)";
   const ticks = Array.from({ length: 60 }, (_, i) => {

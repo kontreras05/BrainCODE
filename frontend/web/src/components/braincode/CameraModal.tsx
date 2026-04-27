@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { X } from "lucide-react";
 import { CFG, type BCState } from "./state";
+
+const VIDEO_URL = "http://127.0.0.1:8765/video_feed";
 
 interface CameraModalProps {
   open: boolean;
@@ -10,10 +13,12 @@ interface CameraModalProps {
 }
 
 export function CameraModal({ open, setOpen, camOn, setCamOn, state }: CameraModalProps) {
+  const [feedError, setFeedError] = useState(false);
+
   if (!open) return null;
   const cfg = CFG[state];
   const StateIcon = cfg.Icon;
-  const fc = state === "away" ? "away" : state === "social" ? "distracted" : state === "absent" ? "absent" : "";
+
   return (
     <div
       className="bc-cam-modal-wrap"
@@ -33,14 +38,30 @@ export function CameraModal({ open, setOpen, camOn, setCamOn, state }: CameraMod
             <div className="bc-cam-off-view">
               <div style={{ fontSize: 20, opacity: 0.3 }}>◉</div>
               <div>Cámara apagada</div>
-              <button className="bc-cam-on-btn" style={{ marginTop: 4 }} onClick={() => setCamOn(true)}>Activar</button>
+              <button
+                className="bc-cam-on-btn"
+                style={{ marginTop: 4 }}
+                onClick={() => { setFeedError(false); setCamOn(true); }}
+              >Activar</button>
+            </div>
+          ) : feedError ? (
+            <div className="bc-cam-off-view">
+              <div style={{ fontSize: 20, opacity: 0.3 }}>◉</div>
+              <div>No hay señal del backend</div>
+              <button
+                className="bc-cam-on-btn"
+                style={{ marginTop: 4 }}
+                onClick={() => setFeedError(false)}
+              >Reintentar</button>
             </div>
           ) : (
             <div className="bc-cam-live-view">
-              <div className="bc-cam-scan" />
-              <div className={`bc-face-box ${fc}`}>
-                <div className="bc-fc tl" /><div className="bc-fc tr" /><div className="bc-fc bl" /><div className="bc-fc br" />
-              </div>
+              <img
+                src={VIDEO_URL}
+                alt="cámara"
+                className="bc-cam-feed-img"
+                onError={() => setFeedError(true)}
+              />
               <div className="bc-rec" />
             </div>
           )}

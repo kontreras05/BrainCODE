@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { STATES, type BCState, type SessionConfig } from "./state";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { BCState, SessionConfig } from "./state";
 
 export function pyApi(): any {
   // @ts-ignore
@@ -49,21 +49,158 @@ export function useBackendData() {
   return { metrics, hourly, score };
 }
 
-export function useSim(active: boolean) {
-  const [state, setState] = useState<BCState>("working");
-  const [segs, setSegs] = useState({ working: 0.62, away: 0.12, social: 0.09, absent: 0.05 });
+// ── Live FocusTracker ───────────────────────────────────────────
+
+export type CalibrationPhaseName =
+  | "WAITING_TO_START"
+  | "CENTER"
+  | "TOP_LEFT"
+  | "TOP_RIGHT"
+  | "BOTTOM_RIGHT"
+  | "BOTTOM_LEFT"
+  | "CALIBRATED";
+
+export interface LiveCalibration {
+  phase: CalibrationPhaseName;
+  progress: number;
+  is_calibrated: boolean;
+  recalibration_suggested: boolean;
+}
+
+export interface LiveEnvironment {
+  brightness: number;
+  face_ratio: number;
+  drift_pct: number;
+  warning: string | null;
+}
+
+export interface LiveState {
+  bc_state: BCState;
+  raw_state: string;
+  distraction_reason: string | null;
+  score: number;
+  calibration: LiveCalibration;
+  environment: LiveEnvironment;
+  segments_seconds: { working: number; away: number; social: number; absent: number };
+  active_window_category: string | null;
+}
+
+export type NormalizationMode =
+  | { kind: "fixed"; durationSec: number }
+  | { kind: "elapsed" };
+
+const DEFAULT_LIVE: LiveState = {
+  bc_state: "working",
+  raw_state: "FOCUSED",
+  distraction_reason: null,
+  score: 100,
+  calibration: { phase: "WAITING_TO_START", progress: 0, is_calibrated: false, recalibration_suggested: false },
+  environment: { brightness: 0, face_ratio: 0, drift_pct: 0, warning: null },
+  segments_seconds: { working: 0, away: 0, social: 0, absent: 0 },
+  active_window_category: null,
+};
+
+export function useLiveState(active: boolean, intervalMs = 300) {
+  const [live, setLive] = useState<LiveState | null>(null);
+
   useEffect(() => {
     if (!active) return;
-    const t = setInterval(() => {
-      const next = STATES[Math.floor(Math.random() * STATES.length)];
-      setState(next);
-      window.dispatchEvent(new CustomEvent("bc-state", { detail: next }));
-      setSegs((p) => ({ ...p, [next]: Math.min(p[next] + 0.005, 0.9) }));
-    }, 7000);
-    return () => clearInterval(t);
-  }, [active]);
-  return { state, segs };
+    let alive = true;
+    let timer: any = null;
+
+    async function tick() {
+      const api = await waitForPyApi();
+      if (!alive || !api) return;
+      try {
+        const s = await api.get_live_state();
+        if (alive && s) setLive(s as LiveState);
+      } catch (err) {
+        // swallow — backend may be transiently unavailable
+      }
+    }
+
+    tick();
+    timer = setInterval(tick, intervalMs);
+    return () => { alive = false; if (timer) clearInterval(timer); };
+  }, [active, intervalMs]);
+
+  return live;
 }
+
+export function useFocusTracker(active: boolean, normMode: NormalizationMode) {
+  const live = useLiveState(active);
+  const lastEmittedState = useRef<BCState | null>(null);
+
+  useEffect(() => {
+    if (!live) return;
+    if (lastEmittedState.current !== live.bc_state) {
+      lastEmittedState.current = live.bc_state;
+      window.dispatchEvent(new CustomEvent("bc-state", { detail: live.bc_state }));
+    }
+  }, [live?.bc_state]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const data = live ?? DEFAULT_LIVE;
+  const seg = data.segments_seconds;
+
+  let segs: { working: number; away: number; social: number; absent: number };
+  if (normMode.kind === "fixed") {
+    const d = Math.max(1, normMode.durationSec);
+    segs = {
+      working: Math.min(1, seg.working / d),
+      away: Math.min(1, seg.away / d),
+      social: Math.min(1, seg.social / d),
+      absent: Math.min(1, seg.absent / d),
+    };
+  } else {
+    const total = Math.max(1, seg.working + seg.away + seg.social + seg.absent);
+    segs = {
+      working: seg.working / total,
+      away: seg.away / total,
+      social: seg.social / total,
+      absent: seg.absent / total,
+    };
+  }
+
+  return {
+    state: data.bc_state,
+    segs,
+    calibration: data.calibration,
+    environment: data.environment,
+    score: data.score,
+    distractionReason: data.distraction_reason,
+    raw: live,
+  };
+}
+
+export function useFocusControl() {
+  const startSession = useCallback(async () => {
+    const api = await waitForPyApi();
+    if (!api) return null;
+    try { return await api.start_session(); } catch { return null; }
+  }, []);
+
+  const stopSession = useCallback(async () => {
+    const api = await waitForPyApi();
+    if (!api) return null;
+    try { return await api.stop_session(); } catch { return null; }
+  }, []);
+
+  const startCalibration = useCallback(async () => {
+    const api = await waitForPyApi();
+    if (!api) return null;
+    try { return await api.start_calibration(); } catch { return null; }
+  }, []);
+
+  const requestRecalibration = useCallback(async () => {
+    const api = await waitForPyApi();
+    if (!api) return null;
+    try { return await api.request_recalibration(); } catch { return null; }
+  }, []);
+
+  return { startSession, stopSession, startCalibration, requestRecalibration };
+}
+
+// ── Pomodoro (unchanged) ────────────────────────────────────────
 
 export function usePomodoro() {
   const [config, setConfig] = useState<SessionConfig | null>(null);

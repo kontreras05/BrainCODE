@@ -108,6 +108,15 @@ class FocusTracker:
         self._current_focus_streak = 0.0
         self._longest_focus_streak = 0.0
         self._distraction_events = []
+
+        # Per-bucket session time used by the frontend Ring.
+        # Mapping (computed in _update_candidate from confirmed state + active window):
+        #   FOCUSED + Social Media window → social
+        #   FOCUSED + other window        → working
+        #   DISTRACTED                    → away
+        #   NOT_PRESENT                   → absent
+        self._segment_seconds = {"working": 0.0, "away": 0.0, "social": 0.0, "absent": 0.0}
+        self._active_window_category: Optional[str] = None
         
         download_models()
         
@@ -206,19 +215,52 @@ class FocusTracker:
         self._gaze_vote_threshold = 5  # require N frames to be "off"
         self._gaze_vote_buffer = deque(maxlen=self._gaze_vote_window)
 
+    @staticmethod
+    def list_cameras(max_index: int = 5) -> list:
+        """Probe camera indices 0..max_index-1 and return available cameras.
+        Uses DirectShow (CAP_DSHOW) on Windows for near-instant probing."""
+        import platform
+        backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
+        available = []
+        for idx in range(max_index):
+            cap = cv2.VideoCapture(idx, backend)
+            if cap.isOpened():
+                # Get camera name if available via backend property
+                available.append({
+                    "index": idx,
+                    "name": f"Cámara {idx}",
+                })
+                cap.release()
+        return available
+
+    def change_camera(self, new_index: int):
+        """Hot-swap the camera index. Restarts the tracking loop thread."""
+        if new_index == self.camera_index:
+            return
+        was_running = self.is_running
+        if was_running:
+            self.is_running = False
+            if self._thread:
+                self._thread.join(timeout=3)
+        self.camera_index = new_index
+        if was_running:
+            self.is_running = True
+            self._thread = threading.Thread(target=self._tracking_loop, daemon=True)
+            self._thread.start()
+
     def start(self):
         if self.is_running:
             return
         self.is_running = True
         self._score = 100.0
         self._current_focus_streak = 0.0
-        
+
         # Reiniciar contadores de tiempo
         now = time.time()
         self._last_score_update_time = now
         self._last_stats_update_time = now
         self._candidate_since = now
-        
+
         # Reset calibration for new session
         self.calibration_phase = CalibrationPhase.WAITING_TO_START
         self._calib_samples_center_gaze.clear()
@@ -232,9 +274,48 @@ class FocusTracker:
         self._gaze_h_history.clear()
         self._gaze_v_history.clear()
         self._gaze_vote_buffer.clear()
-        
+
+        # Reset per-bucket session time
+        self._segment_seconds = {"working": 0.0, "away": 0.0, "social": 0.0, "absent": 0.0}
+        self._active_window_category = None
+
         self._thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self._thread.start()
+
+    def reset_session(self):
+        """Reset session-scoped state (buckets, score, calibration) without
+        stopping the camera/thread. Used by the frontend to start a new
+        session while keeping the tracker alive."""
+        with self._state_lock:
+            now = time.time()
+            self._segment_seconds = {"working": 0.0, "away": 0.0, "social": 0.0, "absent": 0.0}
+            self._score = 100.0
+            self._current_focus_streak = 0.0
+            self._longest_focus_streak = 0.0
+            self._total_focused_time = 0.0
+            self._total_distracted_time = 0.0
+            self._total_absent_time = 0.0
+            self._distraction_events = []
+            self._last_score_update_time = now
+            self._last_stats_update_time = now
+            self._candidate_since = now
+            self.calibration_phase = CalibrationPhase.WAITING_TO_START
+            self._calib_samples_center_gaze.clear()
+            self._calib_samples_center_head.clear()
+            self._calib_samples_center_blink.clear()
+            self._calib_samples_center_face_ratio.clear()
+            self._face_ratio_baseline = 0.0
+            self._drift_warning_since = None
+            for buf in self._calib_samples_corners.values():
+                buf.clear()
+            self._gaze_h_history.clear()
+            self._gaze_v_history.clear()
+            self._gaze_vote_buffer.clear()
+
+    def set_active_window_category(self, category: Optional[str]):
+        """Called from window_monitor; thread-safe."""
+        with self._state_lock:
+            self._active_window_category = category
 
     def start_calibration(self):
         """Manually trigger the calibration process."""
@@ -313,13 +394,58 @@ class FocusTracker:
 
     def end_session(self) -> Dict:
         self.stop()
+        return self.get_session_stats()
+
+    def get_session_stats(self) -> Dict:
+        """Snapshot of session stats without stopping the tracker."""
+        with self._state_lock:
+            return {
+                "final_score": float(self._score),
+                "total_focused_time": int(self._total_focused_time),
+                "total_distracted_time": int(self._total_distracted_time),
+                "total_absent_time": int(self._total_absent_time),
+                "longest_focus_streak": int(self._longest_focus_streak),
+                "distraction_events": list(self._distraction_events),
+                "segments_seconds": dict(self._segment_seconds),
+            }
+
+    def get_segment_seconds(self) -> Dict[str, float]:
+        with self._state_lock:
+            return dict(self._segment_seconds)
+
+    def get_live_state(self) -> Dict:
+        """Serializable snapshot consumed by the React frontend (~3 Hz polling)."""
+        with self._state_lock:
+            cs = self._current_state
+            seg = dict(self._segment_seconds)
+            cat = self._active_window_category
+            confirmed = self._current_confirmed_state
+            score = float(self._score)
+            reason = cs.distraction_reason
+
+        if confirmed == ConcentrationState.NOT_PRESENT:
+            bc_state = "absent"
+        elif confirmed == ConcentrationState.DISTRACTED:
+            bc_state = "away"
+        elif cat == "Social Media":
+            bc_state = "social"
+        else:
+            bc_state = "working"
+
         return {
-            "final_score": float(self._score),
-            "total_focused_time": int(self._total_focused_time),
-            "total_distracted_time": int(self._total_distracted_time),
-            "total_absent_time": int(self._total_absent_time),
-            "longest_focus_streak": int(self._longest_focus_streak),
-            "distraction_events": self._distraction_events
+            "bc_state": bc_state,
+            "raw_state": confirmed.value,
+            "distraction_reason": reason,
+            "score": score,
+            "calibration": {
+                "phase": self.calibration_phase.name,
+                "progress": float(self.calibration_progress),
+                "is_calibrated": bool(self.is_fully_calibrated),
+                "recalibration_suggested": bool(self.recalibration_suggested),
+            },
+            "environment": self.environment_status,
+            "segments_seconds": seg,
+            "active_window_category": cat,
         }
 
     def _tracking_loop(self):
@@ -732,17 +858,30 @@ class FocusTracker:
         delta_t = current_time - self._last_stats_update_time
         self._last_stats_update_time = current_time
         
+        # Only accumulate session-scoped buckets after calibration is done,
+        # so the Ring starts truly empty when the user begins the Pomodoro.
+        accumulate = self.calibration_phase == CalibrationPhase.CALIBRATED
+
         if self._current_confirmed_state == ConcentrationState.FOCUSED:
             self._total_focused_time += delta_t
             self._current_focus_streak += delta_t
             if self._current_focus_streak > self._longest_focus_streak:
                 self._longest_focus_streak = self._current_focus_streak
+            if accumulate:
+                if self._active_window_category == "Social Media":
+                    self._segment_seconds["social"] += delta_t
+                else:
+                    self._segment_seconds["working"] += delta_t
         else:
             self._current_focus_streak = 0.0
             if self._current_confirmed_state == ConcentrationState.DISTRACTED:
                 self._total_distracted_time += delta_t
+                if accumulate:
+                    self._segment_seconds["away"] += delta_t
             elif self._current_confirmed_state == ConcentrationState.NOT_PRESENT:
                 self._total_absent_time += delta_t
+                if accumulate:
+                    self._segment_seconds["absent"] += delta_t
         
         # Scoring pomodoro manager
         score_delta_t = current_time - self._last_score_update_time

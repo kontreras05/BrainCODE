@@ -1,8 +1,11 @@
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
+
 import webview
+
+from backend.video_server import get_video_url
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, "metrics.db")
@@ -39,7 +42,18 @@ def _seconds_by_category(since: datetime):
 
 
 class Api:
-    """Bridge exposed to JS as `window.pywebview.api`."""
+    """Bridge exposed to JS as `window.pywebview.api`.
+
+    Wires the React frontend to:
+      • SQLite metrics (existing today/hourly endpoints)
+      • Live FocusTracker state (state + segments + calibration)
+      • Session control (start/stop/calibrate)
+    """
+
+    def __init__(self, tracker=None):
+        self._tracker = tracker
+
+    # ── Historic metrics (unchanged) ─────────────────────────────
 
     def get_today_metrics(self):
         start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -100,9 +114,84 @@ class Api:
             })
         return out
 
+    # ── Live FocusTracker bridge ─────────────────────────────────
 
-def launch():
-    api = Api()
+    def get_video_url(self):
+        return get_video_url()
+
+    def get_live_state(self):
+        if self._tracker is None:
+            return None
+        try:
+            return self._tracker.get_live_state()
+        except Exception as e:
+            print(f"[Api.get_live_state] {e}")
+            return None
+
+    def start_session(self):
+        """Reset session-scoped state so the user can start a fresh session
+        (calibration goes back to WAITING_TO_START, buckets cleared)."""
+        if self._tracker is None:
+            return {"ok": False, "error": "no_tracker"}
+        try:
+            if not self._tracker.is_running:
+                self._tracker.start()
+            else:
+                self._tracker.reset_session()
+            return {"ok": True, "video_url": get_video_url()}
+        except Exception as e:
+            print(f"[Api.start_session] {e}")
+            return {"ok": False, "error": str(e)}
+
+    def stop_session(self):
+        """Snapshot session stats but keep the tracker (and camera) alive."""
+        if self._tracker is None:
+            return None
+        try:
+            return self._tracker.get_session_stats()
+        except Exception as e:
+            print(f"[Api.stop_session] {e}")
+            return None
+
+    def start_calibration(self):
+        if self._tracker is None:
+            return {"ok": False}
+        self._tracker.start_calibration()
+        return {"ok": True}
+
+    def request_recalibration(self):
+        if self._tracker is None:
+            return {"ok": False}
+        self._tracker.request_recalibration()
+        return {"ok": True}
+
+    # ── Camera selection ─────────────────────────────────────────
+
+    def list_cameras(self):
+        """Return a list of available cameras [{index, name}, ...]."""
+        from backend.focus_tracker import FocusTracker
+        try:
+            cameras = FocusTracker.list_cameras()
+            current = self._tracker.camera_index if self._tracker else 0
+            return {"cameras": cameras, "current": current}
+        except Exception as e:
+            print(f"[Api.list_cameras] {e}")
+            return {"cameras": [], "current": 0}
+
+    def set_camera(self, index: int):
+        """Change the active camera index."""
+        if self._tracker is None:
+            return {"ok": False, "error": "no_tracker"}
+        try:
+            self._tracker.change_camera(int(index))
+            return {"ok": True, "camera_index": int(index)}
+        except Exception as e:
+            print(f"[Api.set_camera] {e}")
+            return {"ok": False, "error": str(e)}
+
+
+def launch(tracker=None):
+    api = Api(tracker=tracker)
     webview.create_window(
         "BrainCode",
         Path(INDEX_HTML).as_uri(),
