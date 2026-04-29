@@ -221,46 +221,54 @@ class FocusTracker:
 
     @staticmethod
     def _get_camera_names_windows() -> list:
-        """Use PowerShell + WMI to get real camera device names on Windows."""
-        import subprocess
+        """Read DirectShow video-input device names in DirectShow enumeration order.
+
+        Uses the registry key that Windows populates when DirectShow first enumerates
+        cameras (same source as cv2.VideoCapture with CAP_DSHOW), so the order matches
+        the OpenCV index exactly. WMI/PnPEntity order differs and causes mismatches.
+        """
+        import winreg
+        # DirectShow Video Input Device Category GUID
+        DSHOW_VIDS = r"Software\Microsoft\ActiveMovie\devenum\{860BB310-5D01-11D0-BD3B-00A0C911CE86}"
+        names = []
         try:
-            result = subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
-                 "Get-CimInstance Win32_PnPEntity | "
-                 "Where-Object { $_.PNPClass -eq 'Camera' -or $_.PNPClass -eq 'Image' } | "
-                 "Select-Object -ExpandProperty Name"],
-                capture_output=True, text=True, timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            if result.returncode == 0:
-                names = [n.strip() for n in result.stdout.strip().split('\n') if n.strip()]
-                return names
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, DSHOW_VIDS)
+            i = 0
+            while True:
+                try:
+                    subkey_name = winreg.EnumKey(key, i)
+                    with winreg.OpenKey(key, subkey_name) as sub:
+                        try:
+                            value, _ = winreg.QueryValueEx(sub, "FriendlyName")
+                            if isinstance(value, bytes):
+                                value = value.decode("utf-16-le").rstrip("\x00")
+                            names.append(str(value))
+                        except FileNotFoundError:
+                            pass
+                    i += 1
+                except OSError:
+                    break
+            winreg.CloseKey(key)
         except Exception as e:
-            print(f"[list_cameras] WMI query failed: {e}")
-        return []
+            print(f"[list_cameras] registry read failed: {e}")
+        return names
 
     @staticmethod
     def list_cameras(max_index: int = 5) -> list:
         """Probe camera indices 0..max_index-1 and return available cameras.
-        Uses DirectShow (CAP_DSHOW) on Windows for near-instant probing.
-        Resolves real device names via WMI on Windows."""
+        Uses DirectShow (CAP_DSHOW) on Windows for near-instant probing."""
         import platform
         is_windows = platform.system() == "Windows"
         backend = cv2.CAP_DSHOW if is_windows else cv2.CAP_ANY
 
-        # Get real device names from WMI (ordered as Windows enumerates them)
         device_names = FocusTracker._get_camera_names_windows() if is_windows else []
 
         available = []
         for idx in range(max_index):
             cap = cv2.VideoCapture(idx, backend)
             if cap.isOpened():
-                # Map by position: WMI order generally matches DirectShow index
                 name = device_names[idx] if idx < len(device_names) else f"Cámara {idx}"
-                available.append({
-                    "index": idx,
-                    "name": name,
-                })
+                available.append({"index": idx, "name": name})
                 cap.release()
         return available
 
@@ -488,8 +496,10 @@ class FocusTracker:
 
             success, image = cap.read()
             if not success:
+                cap.release()
+                cap = None
                 self._update_candidate(ConcentrationState.NOT_PRESENT, "camera_error", {}, None)
-                time.sleep(0.1)
+                time.sleep(0.5)
                 continue
 
             img_h, img_w, _ = image.shape

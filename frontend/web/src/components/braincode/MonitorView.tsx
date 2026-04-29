@@ -28,9 +28,9 @@ interface MonitorViewProps {
   setCamOpen: (v: boolean) => void;
 }
 
-function configToNormMode(cfg: SessionConfig | null): NormalizationMode {
+function configToNormMode(cfg: SessionConfig | null, isBreak = false): NormalizationMode {
   if (cfg && cfg.mode === "pomodoro") {
-    return { kind: "fixed", durationSec: cfg.workMin * 60 * cfg.totalPoms };
+    return { kind: "fixed", durationSec: (isBreak ? cfg.breakMin : cfg.workMin) * 60 };
   }
   return { kind: "elapsed" };
 }
@@ -44,13 +44,14 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
   const ctrl = useFocusControl();
 
   const normMode = useMemo<NormalizationMode>(() => {
-    if (pom.config) return configToNormMode(pom.config);
+    if (pom.config) return configToNormMode(pom.config, pom.isBreak);
     if (pendingConfig) return configToNormMode(pendingConfig);
     return { kind: "elapsed" };
-  }, [pom.config, pendingConfig]);
+  }, [pom.config, pendingConfig, pom.isBreak]);
 
   const focusActive = pom.running || pendingConfig !== null;
-  const { state, segs, calibration, environment } = useFocusTracker(focusActive, normMode);
+  const resetKey = pom.config ? `${pom.done}-${pom.isBreak}` : undefined;
+  const { state, segs, calibration, environment } = useFocusTracker(focusActive, normMode, resetKey);
 
   // Freeze the last live segments at completion so the ring summary is stable.
   useEffect(() => {
@@ -130,12 +131,21 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
     [pom.completed, displaySegs, sessionDurationMin]
   );
 
-  const ringSegs = [
-    { color: CFG.working.hex, pct: displaySegs.working },
-    { color: CFG.away.hex,    pct: displaySegs.away },
-    { color: CFG.social.hex,  pct: displaySegs.social },
-    { color: CFG.absent.hex,  pct: displaySegs.absent },
-  ];
+  let ringSegs;
+  if (pom.isBreak && pom.config && pom.config.mode === "pomodoro") {
+    const totalBreakSecs = pom.config.breakMin * 60;
+    const remainingPct = totalBreakSecs > 0 ? pom.secs / totalBreakSecs : 0;
+    ringSegs = [
+      { color: "#4ea8de", pct: remainingPct }
+    ];
+  } else {
+    ringSegs = [
+      { color: CFG.working.hex, pct: displaySegs.working },
+      { color: CFG.away.hex,    pct: displaySegs.away },
+      { color: CFG.social.hex,  pct: displaySegs.social },
+      { color: CFG.absent.hex,  pct: displaySegs.absent },
+    ];
+  }
   const dots = Array.from({ length: Math.min(totalPoms, 8) }, (_, i) =>
     i < pom.done ? "done" : i === pom.done && pom.running && !pom.isBreak ? "curr" : "empty"
   );

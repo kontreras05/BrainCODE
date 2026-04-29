@@ -144,9 +144,19 @@ export function useLiveState(active: boolean, intervalMs = 300) {
   return live;
 }
 
-export function useFocusTracker(active: boolean, normMode: NormalizationMode) {
+export function useFocusTracker(active: boolean, normMode: NormalizationMode, resetKey?: string) {
   const live = useLiveState(active);
   const lastEmittedState = useRef<BCState | null>(null);
+
+  const [baseSegs, setBaseSegs] = useState({ working: 0, away: 0, social: 0, absent: 0 });
+  const resetKeyRef = useRef(resetKey);
+
+  useEffect(() => {
+    if (live && resetKey !== resetKeyRef.current) {
+      setBaseSegs(live.segments_seconds);
+      resetKeyRef.current = resetKey;
+    }
+  }, [live, resetKey]);
 
   useEffect(() => {
     if (!live) return;
@@ -157,7 +167,15 @@ export function useFocusTracker(active: boolean, normMode: NormalizationMode) {
   }, [live?.bc_state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const data = live ?? DEFAULT_LIVE;
-  const seg = data.segments_seconds;
+  const rawSeg = data.segments_seconds;
+
+  // Subtract base segments to get only the current phase's segments
+  const seg = resetKey !== undefined ? {
+    working: Math.max(0, rawSeg.working - baseSegs.working),
+    away: Math.max(0, rawSeg.away - baseSegs.away),
+    social: Math.max(0, rawSeg.social - baseSegs.social),
+    absent: Math.max(0, rawSeg.absent - baseSegs.absent),
+  } : rawSeg;
 
   let segs: { working: number; away: number; social: number; absent: number };
   if (normMode.kind === "fixed") {
@@ -261,12 +279,12 @@ export function usePomodoro() {
     const t = setInterval(() => {
       setSecs((s) => {
         if (s <= 1) {
+          setRunning(false);
           if (!isBreak) {
             const nd = doneRef.current + 1;
             doneRef.current = nd;
             setDone(nd);
             if (cfg.totalPoms && nd >= cfg.totalPoms) {
-              setRunning(false);
               setCompleted(true);
               return 0;
             }
@@ -288,6 +306,7 @@ export function usePomodoro() {
 
   function skip() {
     if (!config || config.mode !== "pomodoro") return;
+    setRunning(false);
     if (isBreak) {
       setIsBreak(false);
       setSecs(config.workMin * 60);
@@ -296,7 +315,6 @@ export function usePomodoro() {
       doneRef.current = nd;
       setDone(nd);
       if (config.totalPoms && nd >= config.totalPoms) {
-        setRunning(false);
         setCompleted(true);
         return;
       }
