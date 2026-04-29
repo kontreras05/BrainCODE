@@ -100,10 +100,10 @@ export function BrainCodeApp() {
             </button>
           </div>
 
-          <div key={tab} className="bc-tab-pane">
-            {tab === "monitor" && (
+          <div className="bc-tab-pane">
+            <div style={tab !== "monitor" ? { position: "absolute", visibility: "hidden", pointerEvents: "none", width: 0, height: 0, overflow: "hidden" } : undefined}>
               <MonitorView camOn={camOn} setCamOn={setCamOn} camOpen={camOpen} setCamOpen={setCamOpen} />
-            )}
+            </div>
             {tab === "metrics" && <MetricsView />}
             {tab === "jars" && <JarsView />}
           </div>
