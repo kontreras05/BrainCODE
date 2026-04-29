@@ -85,6 +85,10 @@ class FocusTracker:
         self.on_state_change = on_state_change
         
         self.is_running = False
+        # Session lifecycle: thread is alive (is_running) but camera only opens
+        # when a session is active. Lets the user pick a camera before start
+        # and frees the device between sessions.
+        self._session_active = False
         self._thread = None
         self._state_lock = threading.Lock()
         self._current_state = FocusState()
@@ -260,54 +264,29 @@ class FocusTracker:
                 cap.release()
         return available
 
-    def change_camera(self, new_index: int):
-        """Hot-swap the camera index. Restarts the tracking loop thread."""
-        if new_index == self.camera_index:
-            return
-        was_running = self.is_running
-        if was_running:
-            self.is_running = False
-            if self._thread:
-                self._thread.join(timeout=3)
-        self.camera_index = new_index
-        if was_running:
-            self.is_running = True
-            self._thread = threading.Thread(target=self._tracking_loop, daemon=True)
-            self._thread.start()
-
     def start(self):
+        """Start the tracking thread without opening the camera. The thread
+        idles until `start_session()` is called, which lets the user pick a
+        camera in the UI before any device is grabbed."""
         if self.is_running:
             return
         self.is_running = True
-        self._score = 100.0
-        self._current_focus_streak = 0.0
-
-        # Reiniciar contadores de tiempo
-        now = time.time()
-        self._last_score_update_time = now
-        self._last_stats_update_time = now
-        self._candidate_since = now
-
-        # Reset calibration for new session
-        self.calibration_phase = CalibrationPhase.WAITING_TO_START
-        self._calib_samples_center_gaze.clear()
-        self._calib_samples_center_head.clear()
-        self._calib_samples_center_blink.clear()
-        self._calib_samples_center_face_ratio.clear()
-        self._face_ratio_baseline = 0.0
-        self._drift_warning_since = None
-        for buf in self._calib_samples_corners.values():
-            buf.clear()
-        self._gaze_h_history.clear()
-        self._gaze_v_history.clear()
-        self._gaze_vote_buffer.clear()
-
-        # Reset per-bucket session time
-        self._segment_seconds = {"working": 0.0, "away": 0.0, "social": 0.0, "absent": 0.0}
-        self._active_window_category = None
-
         self._thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self._thread.start()
+
+    def start_session(self, camera_index: Optional[int] = None):
+        """Activate a session: reset state, set camera index, signal the loop
+        to open the camera. Idempotent if a session is already active."""
+        if camera_index is not None:
+            self.camera_index = int(camera_index)
+        self.reset_session()
+        self._session_active = True
+
+    def stop_session(self) -> Dict:
+        """End the session: signal the loop to release the camera and return
+        a stats snapshot. The thread keeps running for the next session."""
+        self._session_active = False
+        return self.get_session_stats()
 
     def reset_session(self):
         """Reset session-scoped state (buckets, score, calibration) without
@@ -475,10 +454,38 @@ class FocusTracker:
             "active_window_category": cat,
         }
 
+    def _open_camera(self) -> Optional[cv2.VideoCapture]:
+        """Open the camera using DirectShow on Windows for fast startup."""
+        import platform
+        backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
+        cap = cv2.VideoCapture(self.camera_index, backend)
+        if not cap.isOpened():
+            cap.release()
+            return None
+        return cap
+
     def _tracking_loop(self):
-        cap = cv2.VideoCapture(self.camera_index)
-        
-        while self.is_running and cap.isOpened():
+        cap: Optional[cv2.VideoCapture] = None
+
+        while self.is_running:
+            # Lazy camera: only hold the device while a session is active.
+            if not self._session_active:
+                if cap is not None:
+                    cap.release()
+                    cap = None
+                with self._state_lock:
+                    self._last_frame = None
+                time.sleep(0.1)
+                continue
+
+            if cap is None:
+                cap = self._open_camera()
+                if cap is None:
+                    # Couldn't open the chosen camera; surface it as not-present
+                    self._update_candidate(ConcentrationState.NOT_PRESENT, "camera_error", {}, None)
+                    time.sleep(0.5)
+                    continue
+
             success, image = cap.read()
             if not success:
                 self._update_candidate(ConcentrationState.NOT_PRESENT, "camera_error", {}, None)
@@ -667,8 +674,9 @@ class FocusTracker:
                 
             self._update_candidate(candidate, reason, raw_data, image)
             time.sleep(0.03)
-            
-        cap.release()
+
+        if cap is not None:
+            cap.release()
 
     def _process_gestures(self, result, current_time):
         num_hands = len(result.hand_landmarks) if result.hand_landmarks else 0

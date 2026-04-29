@@ -128,27 +128,30 @@ class Api:
             print(f"[Api.get_live_state] {e}")
             return None
 
-    def start_session(self):
-        """Reset session-scoped state so the user can start a fresh session
-        (calibration goes back to WAITING_TO_START, buckets cleared)."""
+    def start_session(self, camera_index=None):
+        """Activate a session and open the chosen camera. Until this is called
+        the camera stays free, so the user can pick a device in SessionSetup."""
         if self._tracker is None:
             return {"ok": False, "error": "no_tracker"}
         try:
             if not self._tracker.is_running:
                 self._tracker.start()
-            else:
-                self._tracker.reset_session()
-            return {"ok": True, "video_url": get_video_url()}
+            self._tracker.start_session(camera_index)
+            return {
+                "ok": True,
+                "video_url": get_video_url(),
+                "camera_index": self._tracker.camera_index,
+            }
         except Exception as e:
             print(f"[Api.start_session] {e}")
             return {"ok": False, "error": str(e)}
 
     def stop_session(self):
-        """Snapshot session stats but keep the tracker (and camera) alive."""
+        """End the session: release the camera and return stats."""
         if self._tracker is None:
             return None
         try:
-            return self._tracker.get_session_stats()
+            return self._tracker.stop_session()
         except Exception as e:
             print(f"[Api.stop_session] {e}")
             return None
@@ -177,18 +180,6 @@ class Api:
         except Exception as e:
             print(f"[Api.list_cameras] {e}")
             return {"cameras": [], "current": 0}
-
-    def set_camera(self, index: int):
-        """Change the active camera index."""
-        if self._tracker is None:
-            return {"ok": False, "error": "no_tracker"}
-        try:
-            self._tracker.change_camera(int(index))
-            return {"ok": True, "camera_index": int(index)}
-        except Exception as e:
-            print(f"[Api.set_camera] {e}")
-            return {"ok": False, "error": str(e)}
-
 
 def launch(tracker=None):
     api = Api(tracker=tracker)

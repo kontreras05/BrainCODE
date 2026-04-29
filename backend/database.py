@@ -9,7 +9,11 @@ DB_PATH = os.path.join(BASE_DIR, "metrics.db")
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
+
+    # WAL evita el archivo metrics.db-journal residual y permite lecturas
+    # concurrentes sin bloquear escrituras.
+    cursor.execute("PRAGMA journal_mode=WAL;")
+
     # Table for active window metrics
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS window_metrics (

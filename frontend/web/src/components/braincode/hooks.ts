@@ -1,18 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BCState, SessionConfig } from "./state";
+import { mockApi } from "./mock-api";
 
 export function pyApi(): any {
   // @ts-ignore
   return (typeof window !== 'undefined' && window.pywebview && window.pywebview.api) || null;
 }
 
-export function waitForPyApi(timeoutMs = 3000): Promise<any> {
+// En `npm run dev` no hay backend Python; el mock sirve para iterar la UI
+// (selector de cámara, calibración fullscreen, transiciones de estado).
+function isDev(): boolean {
+  // @ts-ignore - Vite import.meta.env
+  return typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV;
+}
+
+export function waitForPyApi(timeoutMs = 1500): Promise<any> {
   return new Promise(resolve => {
     if (pyApi()) return resolve(pyApi());
     const t0 = Date.now();
     const iv = setInterval(() => {
       if (pyApi()) { clearInterval(iv); resolve(pyApi()); }
-      else if (Date.now() - t0 > timeoutMs) { clearInterval(iv); resolve(null); }
+      else if (Date.now() - t0 > timeoutMs) {
+        clearInterval(iv);
+        if (isDev()) {
+          // eslint-disable-next-line no-console
+          console.info("[BrainCODE] usando mock-api (dev sin pywebview)");
+          resolve(mockApi);
+        } else {
+          resolve(null);
+        }
+      }
     }, 100);
   });
 }
@@ -173,10 +190,10 @@ export function useFocusTracker(active: boolean, normMode: NormalizationMode) {
 }
 
 export function useFocusControl() {
-  const startSession = useCallback(async () => {
+  const startSession = useCallback(async (cameraIndex?: number) => {
     const api = await waitForPyApi();
     if (!api) return null;
-    try { return await api.start_session(); } catch { return null; }
+    try { return await api.start_session(cameraIndex); } catch { return null; }
   }, []);
 
   const stopSession = useCallback(async () => {

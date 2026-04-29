@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pause, Play, RotateCcw, SkipForward, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Coffee, Pause, Play, RotateCcw, SkipForward, X } from "lucide-react";
 import { BrainMascot } from "./BrainMascot";
 import { Ring } from "./Ring";
 import { SessionSetup } from "./SessionSetup";
@@ -7,9 +7,19 @@ import { Sparkles } from "./Sparkles";
 import { CameraModal } from "./CameraModal";
 import { CalibrationOverlay } from "./CalibrationOverlay";
 import { useFocusControl, useFocusTracker, usePomodoro, type NormalizationMode } from "./hooks";
-import { CFG, type SessionConfig } from "./state";
+import { CFG, STATES, type SessionConfig } from "./state";
+import { pickInsight } from "./insights";
 
 const VIDEO_URL = "http://127.0.0.1:8765/video_feed";
+
+const ENV_HINT: Record<string, string> = {
+  too_dark: "Hay poca luz",
+  barely_visible: "Cara apenas detectada",
+  moved_closer: "Te has acercado a la cámara",
+  moved_further: "Te has alejado de la cámara",
+};
+
+type CompletedBeat = "celebrate" | "insight" | "breakdown" | "cta";
 
 interface MonitorViewProps {
   camOn: boolean;
@@ -27,6 +37,9 @@ function configToNormMode(cfg: SessionConfig | null): NormalizationMode {
 
 export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorViewProps) {
   const [pendingConfig, setPendingConfig] = useState<SessionConfig | null>(null);
+  const [focusing, setFocusing] = useState(false);
+  const [completedBeat, setCompletedBeat] = useState<CompletedBeat>("celebrate");
+  const lastSegsRef = useRef({ working: 0, away: 0, social: 0, absent: 0 });
   const pom = usePomodoro();
   const ctrl = useFocusControl();
 
@@ -37,7 +50,13 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
   }, [pom.config, pendingConfig]);
 
   const focusActive = pom.running || pendingConfig !== null;
-  const { state, segs, calibration } = useFocusTracker(focusActive, normMode);
+  const { state, segs, calibration, environment } = useFocusTracker(focusActive, normMode);
+
+  // Freeze the last live segments at completion so the ring summary is stable.
+  useEffect(() => {
+    if (focusActive) lastSegsRef.current = segs;
+  }, [focusActive, segs]);
+  const displaySegs = pom.completed ? lastSegsRef.current : segs;
 
   const idle = !pom.config && !pendingConfig;
   const isFreeflow = pom.config?.mode === "freeflow";
@@ -45,24 +64,31 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
   const cfg = CFG[state];
   const timerStr = isFreeflow ? pom.fmt(pom.elapsed) : pom.fmt(pom.secs);
 
-  const handleStart = useCallback(async (cfg: SessionConfig) => {
-    await ctrl.startSession();
+  const handleStart = useCallback(async (cfg: SessionConfig, cameraIndex: number) => {
+    setFocusing(true);
+    await ctrl.startSession(cameraIndex);
+    await new Promise((r) => setTimeout(r, 800));
     setPendingConfig(cfg);
+    setFocusing(false);
   }, [ctrl]);
 
   const handleReset = useCallback(async () => {
     await ctrl.stopSession();
     setPendingConfig(null);
+    setFocusing(false);
     pom.reset();
   }, [ctrl, pom]);
 
-  // Once the user finishes the 5-phase calibration, kick off the Pomodoro.
-  useEffect(() => {
-    if (pendingConfig && calibration.is_calibrated) {
+  const handleBreak = useCallback(() => {
+    pom.start({ mode: "pomodoro", workMin: 5, breakMin: 1, totalPoms: 1 });
+  }, [pom]);
+
+  const handleCalibrated = useCallback(() => {
+    if (pendingConfig) {
       pom.start(pendingConfig);
       setPendingConfig(null);
     }
-  }, [pendingConfig, calibration.is_calibrated]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pendingConfig, pom]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -76,30 +102,62 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
     return () => window.removeEventListener("keydown", onKey);
   }, [pom]);
 
+  // Beat orchestration on completion: celebrate → insight → breakdown → cta
+  useEffect(() => {
+    if (!pom.completed) {
+      setCompletedBeat("celebrate");
+      return;
+    }
+    setCompletedBeat("celebrate");
+    const t1 = setTimeout(() => setCompletedBeat("insight"), 1200);
+    const t2 = setTimeout(() => setCompletedBeat("breakdown"), 3500);
+    const t3 = setTimeout(() => setCompletedBeat("cta"), 5000);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [pom.completed]);
+
+  const sessionDurationMin = useMemo(() => {
+    if (pom.config?.mode === "pomodoro") return pom.config.workMin * pom.config.totalPoms;
+    if (pom.config?.mode === "freeflow") return Math.max(1, Math.round(pom.elapsed / 60));
+    return 0;
+  }, [pom.config, pom.elapsed]);
+
+  const insight = useMemo(
+    () => (pom.completed ? pickInsight(displaySegs, sessionDurationMin) : ""),
+    [pom.completed, displaySegs, sessionDurationMin]
+  );
+
   const ringSegs = [
-    { color: CFG.working.hex, pct: segs.working },
-    { color: CFG.away.hex,    pct: segs.away },
-    { color: CFG.social.hex,  pct: segs.social },
-    { color: CFG.absent.hex,  pct: segs.absent },
+    { color: CFG.working.hex, pct: displaySegs.working },
+    { color: CFG.away.hex,    pct: displaySegs.away },
+    { color: CFG.social.hex,  pct: displaySegs.social },
+    { color: CFG.absent.hex,  pct: displaySegs.absent },
   ];
   const dots = Array.from({ length: Math.min(totalPoms, 8) }, (_, i) =>
     i < pom.done ? "done" : i === pom.done && pom.running && !pom.isBreak ? "curr" : "empty"
   );
 
-  const showCalibration = pendingConfig !== null && !calibration.is_calibrated;
+  const showCalibration = pendingConfig !== null;
+  const beatClass = pom.completed ? ` beat-${completedBeat}` : "";
+
+  const envWarning = pom.running && environment?.warning ? ENV_HINT[environment.warning] : null;
+  const showRecalibBanner = pom.running && calibration.recalibration_suggested;
 
   return (
-    <div className={`bc-monitor${idle ? " welcome" : ""}${pom.completed ? " completed" : ""}`}>
+    <div className={`bc-monitor${idle ? " welcome" : ""}${pom.completed ? " completed" : ""}${focusing ? " focusing" : ""}${beatClass}`}>
       <div
         className="bc-ambient"
         style={{
           background: idle ? CFG.working.hex : cfg.hex,
-          opacity: pom.running ? 0.14 : 0.05,
+          opacity: focusing ? 0.22 : pom.running ? 0.14 : 0.05,
         }}
       />
 
       <div className="bc-ring-wrap">
-        <Ring segs={ringSegs} idle={idle} />
+        <Ring segs={ringSegs} idle={idle} summary={pom.completed} />
         <div className="bc-ring-center">
           <div className="bc-brain-stage">
             <div className="bc-brain-float">
@@ -111,6 +169,7 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
             </div>
             <div className="bc-brain-shadow" aria-hidden />
           </div>
+          {pom.completed && <Sparkles />}
         </div>
       </div>
 
@@ -121,26 +180,17 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
             <div className="bc-idle-hint">Elige un modo para empezar</div>
           </>
         ) : pom.completed ? (
-          <>
-            <div className="bc-done-title">¡Sesión completada!</div>
-            <div className="bc-done-metrics">
-              {[
-                { key: "working", label: "Trabajando", pct: segs.working },
-                { key: "away",    label: "Distraído",  pct: segs.away },
-                { key: "social",  label: "Redes",      pct: segs.social },
-                { key: "absent",  label: "Ausente",    pct: segs.absent },
-              ].map((m, i) => {
-                const cfg = CFG[m.key as keyof typeof CFG];
-                return (
-                  <div key={m.key} className="bc-done-metric" style={{ animationDelay: `${0.55 + i * 0.1}s` }}>
-                    <div className="bc-done-metric-dot" style={{ background: cfg.hex }} />
-                    <div className="bc-done-metric-lbl">{m.label}</div>
-                    <div className="bc-done-metric-val" style={{ color: cfg.hex }}>{Math.round(m.pct * 100)}%</div>
-                  </div>
-                );
-              })}
+          <div className="bc-done-stack">
+            <div className="bc-done-insight">{insight}</div>
+            <div className="bc-done-legend">
+              {STATES.map((s) => (
+                <div key={s} className="bc-done-leg-item">
+                  <span className="bc-done-leg-dot" style={{ background: CFG[s].hex }} />
+                  <span className="bc-done-leg-lbl">{CFG[s].label}</span>
+                </div>
+              ))}
             </div>
-          </>
+          </div>
         ) : pendingConfig ? (
           <>
             <div className="bc-idle-title">Calibrando…</div>
@@ -163,11 +213,14 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
       {idle ? (
         <SessionSetup onStart={handleStart} />
       ) : pom.completed ? (
-        <div className="bc-controls bc-controls-done" style={{ position: "relative" }}>
-          <Sparkles />
-          <button className="bc-ctrl-btn pp bc-done-btn" onClick={handleReset}>
+        <div className="bc-controls bc-controls-done">
+          <button className="bc-ctrl-btn pp bc-done-btn" onClick={handleBreak}>
+            <Coffee size={14} strokeWidth={1.75} />
+            <span>Tomar descanso</span>
+          </button>
+          <button className="bc-ctrl-btn sec bc-done-btn-sec" onClick={handleReset}>
             <RotateCcw size={14} strokeWidth={1.75} />
-            <span>Nueva sesión</span>
+            <span>Otra vez</span>
           </button>
         </div>
       ) : pendingConfig ? null : (
@@ -212,9 +265,25 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
         <CalibrationOverlay
           videoUrl={VIDEO_URL}
           calibration={calibration}
+          environment={environment}
           onStart={() => ctrl.startCalibration()}
-          onCalibrated={() => { /* effect above schedules pom.start */ }}
+          onCalibrated={handleCalibrated}
         />
+      )}
+
+      {showRecalibBanner && (
+        <div className="bc-toast bc-toast-recalib">
+          <span>Tu postura ha cambiado</span>
+          <button className="bc-toast-action" onClick={() => ctrl.requestRecalibration()}>
+            Recalibrar
+          </button>
+        </div>
+      )}
+
+      {!showRecalibBanner && envWarning && (
+        <div className="bc-toast bc-toast-env">
+          <span>{envWarning}</span>
+        </div>
       )}
 
       {camOpen && (

@@ -1,5 +1,8 @@
-"""Tiny MJPEG server that exposes the FocusTracker camera feed (with the
-overlay drawn) to the React frontend over `<img src="…/video_feed">`.
+"""Tiny MJPEG server that exposes the FocusTracker camera feed (with mesh
++ iris overlay) to the React frontend over `<img src="…/video_feed">`.
+
+When no session is active the camera is closed and the stream serves a
+neutral placeholder so the frontend `<img>` doesn't break.
 
 Stdlib only — uses `http.server.ThreadingHTTPServer`. No new deps.
 """
@@ -9,6 +12,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cv2
+import numpy as np
 
 from backend.overlay import make_overlay_renderer
 
@@ -16,6 +20,20 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 TARGET_FPS = 30
 JPEG_QUALITY = 80
+PLACEHOLDER_W = 640
+PLACEHOLDER_H = 480
+
+
+def _build_placeholder() -> bytes:
+    """Solid dark frame with a hint label, used when no session is active."""
+    frame = np.full((PLACEHOLDER_H, PLACEHOLDER_W, 3), 18, dtype=np.uint8)
+    cv2.putText(frame, "Sin sesion", (PLACEHOLDER_W // 2 - 90, PLACEHOLDER_H // 2),
+                cv2.FONT_HERSHEY_DUPLEX, 0.9, (110, 110, 110), 2, cv2.LINE_AA)
+    ok, jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+    return jpg.tobytes() if ok else b""
+
+
+_PLACEHOLDER_JPG = _build_placeholder()
 
 
 def _make_handler(tracker):
@@ -59,23 +77,13 @@ def _make_handler(tracker):
 
                     frame, state = tracker.get_frame_and_state()
                     if frame is None:
-                        time.sleep(0.05)
-                        continue
-
-                    rendered = render(
-                        frame,
-                        state,
-                        tracker.calibration_phase,
-                        tracker.calibration_progress,
-                        tracker.is_fully_calibrated,
-                        tracker.environment_status,
-                        tracker.recalibration_suggested,
-                    )
-
-                    ok, jpg = cv2.imencode(".jpg", rendered, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
-                    if not ok:
-                        continue
-                    payload = jpg.tobytes()
+                        payload = _PLACEHOLDER_JPG
+                    else:
+                        rendered = render(frame, state)
+                        ok, jpg = cv2.imencode(".jpg", rendered, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+                        if not ok:
+                            continue
+                        payload = jpg.tobytes()
 
                     try:
                         self.wfile.write(b"--frame\r\n")
