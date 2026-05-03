@@ -21,3 +21,17 @@ export const CFG: Record<BCState, StateConfig> = {
 export type SessionConfig =
   | { mode: "freeflow" }
   | { mode: "pomodoro"; workMin: number; breakMin: number; totalPoms: number };
+
+export interface SessionRecord {
+  id: number;
+  started_at: string;
+  ended_at: string;
+  duration_sec: number;
+  mode: "pomodoro" | "freeflow";
+  score: number;
+  longest_streak_sec: number;
+  working_sec: number;
+  away_sec: number;
+  social_sec: number;
+  absent_sec: number;
+}

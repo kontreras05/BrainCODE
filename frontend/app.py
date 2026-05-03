@@ -5,6 +5,7 @@ from pathlib import Path
 
 import webview
 
+from backend import database
 from backend.video_server import get_video_url
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -52,6 +53,8 @@ class Api:
 
     def __init__(self, tracker=None):
         self._tracker = tracker
+        self._session_started_at: datetime | None = None
+        self._session_mode: str = "freeflow"
 
     # ── Historic metrics (unchanged) ─────────────────────────────
 
@@ -128,7 +131,7 @@ class Api:
             print(f"[Api.get_live_state] {e}")
             return None
 
-    def start_session(self, camera_index=None):
+    def start_session(self, camera_index=None, mode: str = "freeflow"):
         """Activate a session and open the chosen camera. Until this is called
         the camera stays free, so the user can pick a device in SessionSetup."""
         if self._tracker is None:
@@ -137,6 +140,8 @@ class Api:
             if not self._tracker.is_running:
                 self._tracker.start()
             self._tracker.start_session(camera_index)
+            self._session_started_at = datetime.now()
+            self._session_mode = mode
             return {
                 "ok": True,
                 "video_url": get_video_url(),
@@ -147,14 +152,43 @@ class Api:
             return {"ok": False, "error": str(e)}
 
     def stop_session(self):
-        """End the session: release the camera and return stats."""
+        """End the session: release the camera, persist stats, and return them."""
         if self._tracker is None:
             return None
         try:
-            return self._tracker.stop_session()
+            stats = self._tracker.stop_session()
+            if stats and self._session_started_at:
+                ended_at = datetime.now()
+                segs = stats.get("segments_seconds", {})
+                record = {
+                    "started_at": self._session_started_at.isoformat(sep=" "),
+                    "ended_at": ended_at.isoformat(sep=" "),
+                    "duration_sec": max(0, int((ended_at - self._session_started_at).total_seconds())),
+                    "mode": self._session_mode,
+                    "score": int(stats.get("final_score", 0)),
+                    "longest_streak_sec": int(stats.get("longest_focus_streak", 0)),
+                    "working_sec": int(segs.get("working", 0)),
+                    "away_sec": int(segs.get("away", 0)),
+                    "social_sec": int(segs.get("social", 0)),
+                    "absent_sec": int(segs.get("absent", 0)),
+                }
+                try:
+                    database.insert_session(record)
+                except Exception as db_err:
+                    print(f"[Api.stop_session] db insert failed: {db_err}")
+            self._session_started_at = None
+            return stats
         except Exception as e:
             print(f"[Api.stop_session] {e}")
             return None
+
+    def list_sessions(self, since_iso=None):
+        """Return persisted sessions, optionally filtered by start date."""
+        try:
+            return database.list_sessions(since_iso)
+        except Exception as e:
+            print(f"[Api.list_sessions] {e}")
+            return []
 
     def start_calibration(self):
         if self._tracker is None:

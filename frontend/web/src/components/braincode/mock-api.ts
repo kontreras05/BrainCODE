@@ -3,6 +3,8 @@
 // Permite iterar sobre la UI (selector de cámara, calibración fullscreen,
 // transiciones de estado) sin levantar el backend.
 
+import type { SessionRecord } from "./state";
+
 type CalibPhase =
   | "WAITING_TO_START"
   | "CENTER"
@@ -148,6 +150,32 @@ export const mockApi = {
 
   get_video_url() {
     return Promise.resolve("");
+  },
+
+  list_sessions(since_iso?: string): Promise<SessionRecord[]> {
+    const now = Date.now();
+    const day = 86400_000;
+    function ts(daysAgo: number, h: number, m: number): string {
+      const d = new Date(now - daysAgo * day);
+      d.setHours(h, m, 0, 0);
+      return d.toISOString().replace("T", " ").slice(0, 19);
+    }
+    const rows: SessionRecord[] = [
+      { id: 1,  started_at: ts(0, 9, 0),  ended_at: ts(0, 9, 25),  duration_sec: 1500, mode: "pomodoro", score: 88, longest_streak_sec: 1100, working_sec: 1200, away_sec: 180, social_sec: 60,  absent_sec: 60 },
+      { id: 2,  started_at: ts(0, 10, 0), ended_at: ts(0, 10, 45), duration_sec: 2700, mode: "freeflow", score: 72, longest_streak_sec: 900,  working_sec: 1800, away_sec: 500, social_sec: 200, absent_sec: 200 },
+      { id: 3,  started_at: ts(0, 14, 0), ended_at: ts(0, 14, 30), duration_sec: 1800, mode: "pomodoro", score: 95, longest_streak_sec: 1700, working_sec: 1700, away_sec: 50,  social_sec: 30,  absent_sec: 20 },
+      { id: 4,  started_at: ts(1, 9, 30), ended_at: ts(1, 10, 15), duration_sec: 2700, mode: "freeflow", score: 60, longest_streak_sec: 700,  working_sec: 1500, away_sec: 700, social_sec: 300, absent_sec: 200 },
+      { id: 5,  started_at: ts(1, 11, 0), ended_at: ts(1, 11, 50), duration_sec: 3000, mode: "pomodoro", score: 80, longest_streak_sec: 1400, working_sec: 2200, away_sec: 400, social_sec: 200, absent_sec: 200 },
+      { id: 6,  started_at: ts(2, 8, 0),  ended_at: ts(2, 8, 20),  duration_sec: 1200, mode: "freeflow", score: 50, longest_streak_sec: 500,  working_sec: 600,  away_sec: 400, social_sec: 100, absent_sec: 100 },
+      { id: 7,  started_at: ts(2, 15, 0), ended_at: ts(2, 16, 30), duration_sec: 5400, mode: "freeflow", score: 78, longest_streak_sec: 2000, working_sec: 3800, away_sec: 800, social_sec: 400, absent_sec: 400 },
+      { id: 8,  started_at: ts(4, 10, 0), ended_at: ts(4, 10, 25), duration_sec: 1500, mode: "pomodoro", score: 91, longest_streak_sec: 1300, working_sec: 1350, away_sec: 80,  social_sec: 40,  absent_sec: 30 },
+      { id: 9,  started_at: ts(4, 13, 0), ended_at: ts(4, 14, 0),  duration_sec: 3600, mode: "freeflow", score: 65, longest_streak_sec: 1000, working_sec: 2200, away_sec: 800, social_sec: 400, absent_sec: 200 },
+      { id: 10, started_at: ts(6, 9, 0),  ended_at: ts(6, 9, 30),  duration_sec: 1800, mode: "pomodoro", score: 85, longest_streak_sec: 1600, working_sec: 1600, away_sec: 100, social_sec: 60,  absent_sec: 40 },
+    ];
+    const filtered = since_iso
+      ? rows.filter((r) => r.started_at >= since_iso)
+      : rows;
+    return Promise.resolve(filtered);
   },
 };
 

@@ -57,6 +57,9 @@ MODEL_PATH = os.path.join(os.path.dirname(__file__), "face_landmarker.task")
 GESTURE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task"
 GESTURE_MODEL_PATH = os.path.join(os.path.dirname(__file__), "gesture_recognizer.task")
 
+POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
+POSE_MODEL_PATH = os.path.join(os.path.dirname(__file__), "pose_landmarker_lite.task")
+
 def download_models():
     if not os.path.exists(MODEL_PATH):
         print(f"Descargando modelo face_landmarker.task (se hace solo una vez)...")
@@ -64,6 +67,9 @@ def download_models():
     if not os.path.exists(GESTURE_MODEL_PATH):
         print(f"Descargando modelo gesture_recognizer.task (se hace solo una vez)...")
         urllib.request.urlretrieve(GESTURE_MODEL_URL, GESTURE_MODEL_PATH)
+    if not os.path.exists(POSE_MODEL_PATH):
+        print(f"Descargando modelo pose_landmarker_lite.task (se hace solo una vez)...")
+        urllib.request.urlretrieve(POSE_MODEL_URL, POSE_MODEL_PATH)
 
 class FocusTracker:
     def __init__(
@@ -141,9 +147,26 @@ class FocusTracker:
             num_hands=2
         )
         self.gesture_recognizer = vision.GestureRecognizer.create_from_options(options_gesture)
-        
+
+        # --- Pose Landmarker (person presence detection) ---
+        # Lets us distinguish "user stepped away" (NOT_PRESENT) from "user is at
+        # the desk but face is hidden / turned away" (DISTRACTED). Without this,
+        # any face miss flips to absent which produces false absences when the
+        # user just looks down at a notebook or rubs their eyes.
+        base_options_pose = python.BaseOptions(model_asset_path=POSE_MODEL_PATH)
+        options_pose = vision.PoseLandmarkerOptions(
+            base_options=base_options_pose,
+            num_poses=1
+        )
+        self.pose_detector = vision.PoseLandmarker.create_from_options(options_pose)
+
+        # Minimum visibility for pose to count as "person present" — pose model
+        # often returns ghost landmarks with very low visibility scores.
+        self._pose_visibility_threshold = 0.5
+        self._pose_min_visible_landmarks = 3
+
         # --- Concurrency ---
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
         
         self._last_yaw = 0
         self._last_pitch = 0
@@ -226,32 +249,41 @@ class FocusTracker:
         Uses the registry key that Windows populates when DirectShow first enumerates
         cameras (same source as cv2.VideoCapture with CAP_DSHOW), so the order matches
         the OpenCV index exactly. WMI/PnPEntity order differs and causes mismatches.
+        Tries HKCU first, then HKLM. Returns [] silently if the key isn't present —
+        callers fall back to generic "Cámara N" labels.
         """
         import winreg
         # DirectShow Video Input Device Category GUID
         DSHOW_VIDS = r"Software\Microsoft\ActiveMovie\devenum\{860BB310-5D01-11D0-BD3B-00A0C911CE86}"
-        names = []
-        try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, DSHOW_VIDS)
-            i = 0
-            while True:
-                try:
-                    subkey_name = winreg.EnumKey(key, i)
-                    with winreg.OpenKey(key, subkey_name) as sub:
-                        try:
-                            value, _ = winreg.QueryValueEx(sub, "FriendlyName")
-                            if isinstance(value, bytes):
-                                value = value.decode("utf-16-le").rstrip("\x00")
-                            names.append(str(value))
-                        except FileNotFoundError:
-                            pass
-                    i += 1
-                except OSError:
-                    break
-            winreg.CloseKey(key)
-        except Exception as e:
-            print(f"[list_cameras] registry read failed: {e}")
-        return names
+        for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            try:
+                key = winreg.OpenKey(hive, DSHOW_VIDS)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                continue
+            names = []
+            try:
+                i = 0
+                while True:
+                    try:
+                        subkey_name = winreg.EnumKey(key, i)
+                        with winreg.OpenKey(key, subkey_name) as sub:
+                            try:
+                                value, _ = winreg.QueryValueEx(sub, "FriendlyName")
+                                if isinstance(value, bytes):
+                                    value = value.decode("utf-16-le").rstrip("\x00")
+                                names.append(str(value))
+                            except FileNotFoundError:
+                                pass
+                        i += 1
+                    except OSError:
+                        break
+            finally:
+                winreg.CloseKey(key)
+            if names:
+                return names
+        return []
 
     @staticmethod
     def list_cameras(max_index: int = 5) -> list:
@@ -508,12 +540,16 @@ class FocusTracker:
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
             
             # --- PARALLEL RECOGNITION ---
-            # Run both heavy ML models in parallel to prevent frame rate drops (race condition fix)
+            # Run all heavy ML models in parallel to prevent frame rate drops (race condition fix)
             future_face = self._executor.submit(self.detector.detect, mp_image)
             future_gesture = self._executor.submit(self.gesture_recognizer.recognize, mp_image)
-            
+            future_pose = self._executor.submit(self.pose_detector.detect, mp_image)
+
             detection_result = future_face.result()
             gesture_result = future_gesture.result()
+            pose_result = future_pose.result()
+
+            person_present = self._is_person_present(pose_result)
             
             # --- GESTURE PROCESSING ---
             current_time = time.time()
@@ -528,9 +564,18 @@ class FocusTracker:
                 self._detected_gestures.clear()
             
             # PASO 1 - Rostro detectado
+            # If face is missing but a body/torso is visible, the user is at the
+            # desk with their face hidden (looking down, covering, turned around).
+            # That's a distraction, not an absence.
             if not detection_result.face_landmarks:
-                self._update_candidate(ConcentrationState.NOT_PRESENT, "no_face_detected", raw_data, image)
+                raw_data["person_present"] = person_present
+                if person_present:
+                    self._update_candidate(ConcentrationState.DISTRACTED, "face_hidden", raw_data, image)
+                else:
+                    self._update_candidate(ConcentrationState.NOT_PRESENT, "no_person_detected", raw_data, image)
                 continue
+
+            raw_data["person_present"] = True
                 
             face_landmarks = detection_result.face_landmarks[0]
             
@@ -687,6 +732,24 @@ class FocusTracker:
 
         if cap is not None:
             cap.release()
+
+    def _is_person_present(self, pose_result) -> bool:
+        """True if the pose landmarker returns enough confidently-visible landmarks.
+
+        Pose Landmarker can return landmarks with very low visibility scores even
+        when there is no person, so we require N landmarks above a visibility
+        threshold rather than just `pose_landmarks` being non-empty.
+        """
+        if not pose_result or not pose_result.pose_landmarks:
+            return False
+        landmarks = pose_result.pose_landmarks[0]
+        if not landmarks:
+            return False
+        visible = sum(
+            1 for lm in landmarks
+            if getattr(lm, "visibility", 1.0) >= self._pose_visibility_threshold
+        )
+        return visible >= self._pose_min_visible_landmarks
 
     def _process_gestures(self, result, current_time):
         num_hands = len(result.hand_landmarks) if result.hand_landmarks else 0

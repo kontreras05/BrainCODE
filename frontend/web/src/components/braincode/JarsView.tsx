@@ -1,62 +1,109 @@
-import { Fragment } from "react";
+import { Fragment, useMemo } from "react";
 import { BrainMascot } from "./BrainMascot";
 import { JarSVG } from "./JarSVG";
-import { CFG } from "./state";
+import { CFG, type SessionRecord } from "./state";
+import { useSessions } from "./hooks";
 
-interface Session {
-  id: number;
-  date: string;
-  dur: string;
-  score: number;
-  label: string;
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-const MOCK_SESSIONS: Session[] = [
-  { id: 1, date: "Hoy 10:30",  dur: "25m",    score: 88, label: "Análisis de datos" },
-  { id: 2, date: "Hoy 09:00",  dur: "25m",    score: 62, label: "Revisión código" },
-  { id: 3, date: "Ayer 16:45", dur: "1h 12m", score: 94, label: "Deep work" },
-  { id: 4, date: "Ayer 14:00", dur: "25m",    score: 38, label: "Emails" },
-  { id: 5, date: "Ayer 11:00", dur: "50m",    score: 76, label: "Prep reunión" },
-  { id: 6, date: "Lun 17:00",  dur: "25m",    score: 95, label: "Arquitectura" },
-  { id: 7, date: "Lun 15:00",  dur: "25m",    score: 55, label: "Revisión PRs" },
-  { id: 8, date: "Lun 11:30",  dur: "1h 02m", score: 83, label: "Diseño sistema" },
-];
+function dayLabel(isoDate: string): string {
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (isoDate === localDateStr(today)) return "Hoy";
+  if (isoDate === localDateStr(yesterday)) return "Ayer";
+  const d = new Date(isoDate + "T12:00:00");
+  return d.toLocaleDateString("es-ES", { weekday: "short", day: "numeric" }).replace(".", "");
+}
 
-function JarItem({ session }: { session: Session }) {
-  const c = session.score >= 80 ? CFG.working.hex : session.score >= 58 ? CFG.social.hex : CFG.away.hex;
+function groupByDay(sessions: SessionRecord[]): Map<string, SessionRecord[]> {
+  const map = new Map<string, SessionRecord[]>();
+  for (const s of sessions) {
+    const day = s.started_at.slice(0, 10);
+    if (!map.has(day)) map.set(day, []);
+    map.get(day)!.push(s);
+  }
+  return new Map([...map.entries()].sort((a, b) => b[0].localeCompare(a[0])));
+}
+
+function brainSizes(sessions: SessionRecord[]): number[] {
+  const CAPACITY = 60;
+  const bases = sessions.map((s) => {
+    const dMin = s.duration_sec / 60;
+    return Math.min(64, Math.max(24, 24 + (dMin - 5) * (40 / 85)));
+  });
+  const total = bases.reduce((a, b) => a + b, 0);
+  if (total <= CAPACITY) return bases.map(Math.round);
+  const factor = CAPACITY / total;
+  return bases.map((b) => Math.max(14, Math.round(b * factor)));
+}
+
+function DayJar({ isoDate, sessions }: { isoDate: string; sessions: SessionRecord[] }) {
+  const avgScore = Math.round(sessions.reduce((a, s) => a + s.score, 0) / sessions.length);
+  const c = avgScore >= 80 ? CFG.working.hex : avgScore >= 58 ? CFG.social.hex : CFG.away.hex;
+  const totalFocusMin = Math.round(sessions.reduce((a, s) => a + s.working_sec, 0) / 60);
+  const sorted = useMemo(
+    () => [...sessions].sort((a, b) => b.duration_sec - a.duration_sec),
+    [sessions]
+  );
+  const sizes = useMemo(() => brainSizes(sorted), [sorted]);
+
   return (
-    <div className="bc-jar-item" title={`${session.label} · ${session.date} · ${session.dur}`}>
+    <div
+      className="bc-jar-item"
+      title={`${sessions.length} sesión${sessions.length !== 1 ? "es" : ""} · ${totalFocusMin} min foco · ${avgScore}%`}
+    >
       <div className="bc-jar-svg-wrap">
-        <JarSVG color={c} fillPct={session.score / 100} />
-        <div style={{ position: "absolute", bottom: 30, left: "50%", transform: "translateX(-50%)", flexShrink: 0 }}>
-          <BrainMascot size={56} color={c} state="completed" />
+        <JarSVG color={c} fillPct={avgScore / 100} />
+        <div className="bc-jar-brain-stack">
+          {sorted.map((s, i) => (
+            <div key={s.id} className="bc-jar-brain-slot">
+              <BrainMascot size={sizes[i]} color={c} state="completed" />
+            </div>
+          ))}
         </div>
       </div>
-      <div className="bc-jar-item-label">{session.label}</div>
-      <div className="bc-jar-item-meta">
-        <span className="bc-jar-item-score" style={{ color: c }}>{session.score}%</span>
+      <div className="bc-jar-item-date">{dayLabel(isoDate)}</div>
+      <div className="bc-jar-day-count">
+        {sessions.length} ses. · {avgScore}%
       </div>
-      <div className="bc-jar-item-date">{session.date}</div>
     </div>
   );
 }
 
 export function JarsView() {
-  const rows = [MOCK_SESSIONS.slice(0, 4), MOCK_SESSIONS.slice(4)];
+  const sessions = useSessions();
+  const dayMap = useMemo(() => groupByDay(sessions), [sessions]);
+  const days = [...dayMap.entries()];
+
+  const rows: [string, SessionRecord[]][][] = [];
+  for (let i = 0; i < days.length; i += 4) rows.push(days.slice(i, i + 4));
+
   return (
     <div className="bc-jars-view">
       <div className="bc-shelf-header">
         <div className="bc-mhdr-title" style={{ fontSize: 16 }}>Tarros de sesión</div>
-        <div className="bc-mhdr-sub">{MOCK_SESSIONS.length} sesiones · El nivel indica el porcentaje de foco</div>
+        <div className="bc-mhdr-sub">
+          {days.length} {days.length === 1 ? "día" : "días"} · {sessions.length}{" "}
+          {sessions.length === 1 ? "sesión" : "sesiones"}
+        </div>
       </div>
-      {rows.map((row, ri) => (
-        <Fragment key={ri}>
-          <div className="bc-shelf-row">
-            {row.map((s) => <JarItem key={s.id} session={s} />)}
-          </div>
-          <div className="bc-shelf-spacer" />
-        </Fragment>
-      ))}
+      {sessions.length === 0 ? (
+        <div className="bc-settings-empty">No hay sesiones todavía</div>
+      ) : (
+        rows.map((row, ri) => (
+          <Fragment key={ri}>
+            <div className="bc-shelf-row">
+              {row.map(([isoDate, daySessions]) => (
+                <DayJar key={isoDate} isoDate={isoDate} sessions={daySessions} />
+              ))}
+            </div>
+            <div className="bc-shelf-spacer" />
+          </Fragment>
+        ))
+      )}
     </div>
   );
 }

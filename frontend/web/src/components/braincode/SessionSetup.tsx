@@ -1,9 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
-import { Camera, ChevronDown, Clock, Coffee, Infinity as InfinityIcon, Play, Repeat, SlidersHorizontal } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Clock, Coffee, Infinity as InfinityIcon, Play, Repeat, SlidersHorizontal } from "lucide-react";
 import type { SessionConfig } from "./state";
-import { waitForPyApi } from "./hooks";
-
-interface CameraInfo { index: number; name: string }
+import { loadLastCamera, saveLastCamera } from "./camera-prefs";
 
 interface SessionSetupProps {
   onStart: (cfg: SessionConfig, cameraIndex: number) => void;
@@ -11,7 +9,6 @@ interface SessionSetupProps {
 
 const STROKE = 1.5;
 const LS_KEY = "bc:last-session";
-const CAM_KEY = "bc:last-camera-index";
 
 type PomConfig = { mode: "pomodoro"; workMin: number; breakMin: number; totalPoms: number };
 const DEFAULT_POM: PomConfig = { mode: "pomodoro", workMin: 25, breakMin: 5, totalPoms: 4 };
@@ -41,53 +38,9 @@ function saveLastSession(cfg: SessionConfig) {
   try { localStorage.setItem(LS_KEY, JSON.stringify(cfg)); } catch { /* ignore */ }
 }
 
-function loadLastCamera(): number {
-  try {
-    const raw = localStorage.getItem(CAM_KEY);
-    if (raw === null) return 0;
-    const idx = parseInt(raw, 10);
-    return Number.isFinite(idx) ? idx : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function saveLastCamera(idx: number) {
-  try { localStorage.setItem(CAM_KEY, String(idx)); } catch { /* ignore */ }
-}
-
 export function SessionSetup({ onStart }: SessionSetupProps) {
   const [cfg, setCfg] = useState<PomConfig>(() => loadLastSession());
   const [customizing, setCustomizing] = useState(false);
-
-  const [cameras, setCameras] = useState<CameraInfo[]>([]);
-  const [cameraIdx, setCameraIdx] = useState<number>(() => loadLastCamera());
-  const [camLoading, setCamLoading] = useState(true);
-  const [camDropOpen, setCamDropOpen] = useState(false);
-
-  const loadCameras = useCallback(async () => {
-    setCamLoading(true);
-    try {
-      const api = await waitForPyApi();
-      if (!api) return;
-      const res = await api.list_cameras();
-      if (res?.cameras) {
-        setCameras(res.cameras);
-        // Si la última cámara guardada ya no existe, caer en la primera disponible.
-        const stored = loadLastCamera();
-        const hasStored = res.cameras.some((c: CameraInfo) => c.index === stored);
-        const fallback = res.cameras[0]?.index ?? 0;
-        setCameraIdx(hasStored ? stored : fallback);
-      }
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn("Error cargando cámaras", err);
-    } finally {
-      setCamLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { loadCameras(); }, [loadCameras]);
 
   useEffect(() => {
     if (customizing) saveLastSession(cfg);
@@ -97,23 +50,21 @@ export function SessionSetup({ onStart }: SessionSetupProps) {
 
   const handleStart = (c: PomConfig) => {
     saveLastSession(c);
-    saveLastCamera(cameraIdx);
-    onStart(c, cameraIdx);
+    const idx = loadLastCamera();
+    saveLastCamera(idx);
+    onStart(c, idx);
   };
 
   const handleFreeflow = () => {
-    saveLastCamera(cameraIdx);
-    onStart({ mode: "freeflow" }, cameraIdx);
+    const idx = loadLastCamera();
+    saveLastCamera(idx);
+    onStart({ mode: "freeflow" }, idx);
   };
-
-  const currentCam = cameras.find((c) => c.index === cameraIdx);
-  const noCameras = !camLoading && cameras.length === 0;
-  const showSelector = cameras.length > 1; // si solo hay una, mostramos solo el nombre
 
   return (
     <div className="bc-setup">
       {!customizing ? (
-        <button className="bc-start-btn" onClick={() => handleStart(cfg)} disabled={noCameras}>
+        <button className="bc-start-btn" onClick={() => handleStart(cfg)}>
           <Play size={14} strokeWidth={2} fill="currentColor" />
           <span>Empezar — {cfg.workMin} min</span>
         </button>
@@ -163,47 +114,12 @@ export function SessionSetup({ onStart }: SessionSetupProps) {
             />
           </div>
           <div className="bc-cfg-sep" />
-          <button className="bc-cfg-go" onClick={() => handleStart(cfg)} disabled={noCameras}>
+          <button className="bc-cfg-go" onClick={() => handleStart(cfg)}>
             <Play size={12} strokeWidth={2} fill="currentColor" />
             <span>Iniciar</span>
           </button>
         </div>
       )}
-
-      <div className="bc-setup-cam">
-        <Camera size={12} strokeWidth={STROKE} />
-        {camLoading ? (
-          <span className="bc-setup-cam-text muted">Buscando cámaras…</span>
-        ) : noCameras ? (
-          <span className="bc-setup-cam-text warn">No se detecta cámara</span>
-        ) : showSelector ? (
-          <div className="bc-setup-cam-wrap">
-            <button
-              className={`bc-setup-cam-btn${camDropOpen ? " open" : ""}`}
-              onClick={() => setCamDropOpen((v) => !v)}
-              aria-expanded={camDropOpen}
-            >
-              <span className="bc-setup-cam-text">{currentCam?.name ?? `Cámara ${cameraIdx}`}</span>
-              <ChevronDown size={10} strokeWidth={2} className={`bc-setup-cam-chev${camDropOpen ? " flip" : ""}`} />
-            </button>
-            {camDropOpen && (
-              <div className="bc-setup-cam-options">
-                {cameras.map((cam) => (
-                  <button
-                    key={cam.index}
-                    className={`bc-setup-cam-opt${cam.index === cameraIdx ? " active" : ""}`}
-                    onClick={() => { setCameraIdx(cam.index); setCamDropOpen(false); }}
-                  >
-                    <span>{cam.name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          <span className="bc-setup-cam-text">{currentCam?.name ?? `Cámara ${cameraIdx}`}</span>
-        )}
-      </div>
 
       <div className="bc-setup-secondary">
         <button
@@ -216,7 +132,7 @@ export function SessionSetup({ onStart }: SessionSetupProps) {
           <span>{customizing ? "Listo" : "Personalizar"}</span>
         </button>
         <span className="bc-setup-link-sep" />
-        <button type="button" className="bc-setup-link" onClick={handleFreeflow} disabled={noCameras}>
+        <button type="button" className="bc-setup-link" onClick={handleFreeflow}>
           <InfinityIcon size={12} strokeWidth={STROKE} />
           <span>Modo libre</span>
         </button>

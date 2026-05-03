@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Activity, BarChart3, Bell, Camera, FlaskConical, Settings } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Activity, BarChart3, Bell, Camera, FlaskConical, Moon, Settings, Sun } from "lucide-react";
 import { MonitorView } from "./MonitorView";
 import { MetricsView } from "./MetricsView";
 import { JarsView } from "./JarsView";
@@ -11,6 +11,16 @@ const ICON_STROKE = 1.5;
 const ICON_NAV = 16;
 
 type Tab = "monitor" | "metrics" | "jars";
+type Theme = "light" | "dark";
+
+const THEME_KEY = "braincode-theme";
+
+function readInitialTheme(): Theme {
+  if (typeof window === "undefined") return "light";
+  const stored = window.localStorage.getItem(THEME_KEY);
+  if (stored === "light" || stored === "dark") return stored;
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
 
 export function BrainCodeApp() {
   const [tab, setTab] = useState<Tab>("monitor");
@@ -18,6 +28,7 @@ export function BrainCodeApp() {
   const [camOn, setCamOn] = useState(true);
   const [camOpen, setCamOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [theme, setTheme] = useState<Theme>(readInitialTheme);
 
   useEffect(() => {
     const onState = (e: Event) => {
@@ -28,10 +39,18 @@ export function BrainCodeApp() {
     return () => window.removeEventListener("bc-state", onState);
   }, []);
 
+  useEffect(() => {
+    window.localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((t) => (t === "dark" ? "light" : "dark"));
+  }, []);
+
   const cfg = CFG[globalState];
 
   return (
-    <div className="bc-app">
+    <div className="bc-app" data-theme={theme}>
       <div className="bc-window">
         {/* SIDEBAR */}
         <div className="bc-sidebar">
@@ -76,6 +95,18 @@ export function BrainCodeApp() {
             <button className="bc-cam-status" onClick={() => setCamOpen(!camOpen)}>
               <div className={`bc-cam-dot${camOn ? " live" : ""}`} style={{ background: camOn ? cfg.hex : "oklch(45% 0.02 60)" }} />
               <span>{camOn ? cfg.label : "Cámara apagada"}</span>
+            </button>
+            <button
+              className="bc-cam-status"
+              onClick={toggleTheme}
+              aria-label={theme === "dark" ? "Activar modo claro" : "Activar modo oscuro"}
+            >
+              <span className="bc-nav-icon">
+                {theme === "dark"
+                  ? <Sun size={ICON_NAV} strokeWidth={ICON_STROKE} />
+                  : <Moon size={ICON_NAV} strokeWidth={ICON_STROKE} />}
+              </span>
+              <span>{theme === "dark" ? "Modo claro" : "Modo oscuro"}</span>
             </button>
             <button className="bc-cam-status" onClick={() => setSettingsOpen(!settingsOpen)}>
               <span className="bc-nav-icon">

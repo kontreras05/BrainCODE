@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BCState, SessionConfig } from "./state";
+import type { BCState, SessionConfig, SessionRecord } from "./state";
 import { mockApi } from "./mock-api";
 
 export function pyApi(): any {
@@ -199,6 +199,7 @@ export function useFocusTracker(active: boolean, normMode: NormalizationMode, re
   return {
     state: data.bc_state,
     segs,
+    segSecs: seg,
     calibration: data.calibration,
     environment: data.environment,
     score: data.score,
@@ -233,6 +234,40 @@ export function useFocusControl() {
   }, []);
 
   return { startSession, stopSession, startCalibration, requestRecalibration };
+}
+
+// ── Sessions ────────────────────────────────────────────────────
+
+export function useSessions() {
+  const [sessions, setSessions] = useState<SessionRecord[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function load() {
+      const api = await waitForPyApi();
+      if (!api || !alive) return;
+      try {
+        const rows = await api.list_sessions();
+        if (alive && Array.isArray(rows)) setSessions(rows);
+      } catch (err) {
+        console.warn("[useSessions] error", err);
+      }
+    }
+
+    load();
+
+    function onVisibility() {
+      if (document.visibilityState === "visible") load();
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      alive = false;
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
+  return sessions;
 }
 
 // ── Pomodoro (unchanged) ────────────────────────────────────────
