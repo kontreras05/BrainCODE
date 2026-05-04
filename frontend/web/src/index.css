@@ -241,7 +241,11 @@
     animation-duration: var(--dur-fast) !important;
     transition-duration: var(--dur-fast) !important;
   }
-  .bc-brain-float, .bc-brain-shadow { animation: none !important; }
+  .bc-brain-float, .bc-brain-shadow,
+  .bc-mascot-wrap, .bc-ring-glow,
+  .bc-mood-confused, .bc-mood-glowing,
+  .bc-mood-drowsy { animation: none !important; }
+  .bc-mascot-exit, .bc-mascot-enter { transition: none !important; }
 }
 
 .bc-app {
@@ -494,17 +498,183 @@
   50%      { transform: translateX(-50%) scale(1.1); opacity: 0.85; }
 }
 
+/* ─── INNER GLOW: radial light inside the ring that follows state color ─── */
+.bc-ring-glow {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 72%; height: 72%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklch, var(--bc-state-color, #4a8a6a) 15%, transparent) 0%,
+    color-mix(in oklch, var(--bc-state-color, #4a8a6a) 6%, transparent) 40%,
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: 0;
+  transition: background 1.2s ease, opacity 1.2s ease;
+  opacity: 0;
+}
+.bc-monitor:not(.welcome) .bc-ring-glow {
+  opacity: 1;
+  animation: bc-glow-pulse 4s ease-in-out infinite;
+}
+.bc-monitor.welcome .bc-ring-glow { opacity: 0; }
+@keyframes bc-glow-pulse {
+  0%, 100% { opacity: 0.7; transform: translate(-50%, -50%) scale(1); }
+  50%      { opacity: 1; transform: translate(-50%, -50%) scale(1.06); }
+}
+.bc-app[data-theme="dark"] .bc-ring-glow {
+  background: radial-gradient(
+    circle,
+    color-mix(in oklch, var(--bc-state-color, #4a8a6a) 22%, transparent) 0%,
+    color-mix(in oklch, var(--bc-state-color, #4a8a6a) 10%, transparent) 40%,
+    transparent 70%
+  );
+}
+
+/* ─── MASCOT CROSSFADE: dual-layer smooth transitions between states ─── */
+.bc-mascot-wrap {
+  position: relative;
+  /* Organic breathing: subtle scale Y oscillation on top of float */
+  animation: bc-breathe 4.2s ease-in-out infinite;
+}
+.bc-mascot-img {
+  position: absolute;
+  top: 0; left: 0;
+  transition:
+    opacity var(--dur-state) var(--ease-out),
+    transform var(--dur-state) var(--ease-out),
+    filter var(--dur-state) var(--ease-out);
+}
+/* Exiting image: fades out, shrinks, blurs */
+.bc-mascot-exit {
+  opacity: 0;
+  transform: scale(0.92);
+  filter: blur(4px);
+  z-index: 0;
+}
+/* Entering image: fades from semi-transparent to full */
+.bc-mascot-enter {
+  animation: bc-mascot-fade-in var(--dur-state) var(--ease-out) both;
+  z-index: 1;
+}
+@keyframes bc-mascot-fade-in {
+  from { opacity: 0.3; transform: scale(1.04); filter: blur(2px); }
+  to   { opacity: 1; transform: scale(1); filter: blur(0); }
+}
+
+/* Organic breathing: layered on top of .bc-brain-float */
+@keyframes bc-breathe {
+  0%, 100% { transform: scaleY(1) scaleX(1); }
+  35%      { transform: scaleY(1.012) scaleX(0.994); }
+  65%      { transform: scaleY(0.995) scaleX(1.003); }
+}
+
+/* ─── MASCOT MOOD REACTIONS (CSS-driven) ─── */
+
+/* Squint: too_dark environment — slight brightness reduction + squint */
+.bc-mood-squint {
+  filter: brightness(0.82) contrast(1.08);
+  transition: filter 1s ease;
+}
+
+/* Confused: recalibration suggested — subtle wobble */
+.bc-mood-confused {
+  animation: bc-breathe 4.2s ease-in-out infinite, bc-confused-wobble 2.5s ease-in-out infinite;
+}
+@keyframes bc-confused-wobble {
+  0%, 100% { transform: scaleY(1) scaleX(1) rotate(0deg); }
+  25%      { transform: scaleY(1.012) scaleX(0.994) rotate(-2deg); }
+  75%      { transform: scaleY(0.995) scaleX(1.003) rotate(2deg); }
+}
+
+/* Sweating: long focus streak — show sweat drop overlay */
+.bc-mascot-sweat {
+  position: absolute;
+  top: 12%; right: 14%;
+  width: 12px; height: 16px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.6s ease;
+}
+.bc-mascot-sweat::before {
+  content: '💧';
+  font-size: 14px;
+  position: absolute;
+  top: 0; left: 0;
+  animation: bc-sweat-drip 2s ease-in-out infinite;
+}
+.bc-mood-sweating .bc-mascot-sweat {
+  opacity: 0.85;
+}
+@keyframes bc-sweat-drip {
+  0%, 100% { transform: translateY(0) scale(0.9); opacity: 0.6; }
+  40%      { transform: translateY(3px) scale(1); opacity: 1; }
+  80%      { transform: translateY(8px) scale(0.8); opacity: 0.3; }
+}
+
+/* Glowing: high score — golden rim-light effect */
+.bc-mood-glowing {
+  filter: drop-shadow(0 0 8px oklch(78% 0.16 80 / 0.5)) drop-shadow(0 0 20px oklch(78% 0.16 80 / 0.2));
+  animation: bc-breathe 4.2s ease-in-out infinite, bc-glow-rim 3s ease-in-out infinite;
+}
+@keyframes bc-glow-rim {
+  0%, 100% { filter: drop-shadow(0 0 8px oklch(78% 0.16 80 / 0.4)) drop-shadow(0 0 20px oklch(78% 0.16 80 / 0.15)); }
+  50%      { filter: drop-shadow(0 0 14px oklch(78% 0.16 80 / 0.6)) drop-shadow(0 0 32px oklch(78% 0.16 80 / 0.25)); }
+}
+
+/* Drowsy: paused state — slight desaturation and slow breathing */
+.bc-mood-drowsy {
+  filter: saturate(0.7) brightness(0.95);
+  animation: bc-breathe-slow 6s ease-in-out infinite;
+  transition: filter 1.2s ease;
+}
+@keyframes bc-breathe-slow {
+  0%, 100% { transform: scaleY(1) scaleX(1); }
+  40%      { transform: scaleY(1.018) scaleX(0.99); }
+  70%      { transform: scaleY(0.992) scaleX(1.005); }
+}
+
+/* Paused mascot: desaturate + slow float */
+.bc-mascot-paused {
+  filter: saturate(0.6) brightness(0.88);
+  transition: filter 1s ease;
+}
+
+/* ─── DARK MODE: adapt brain mascot to dark canvas ─── */
+.bc-app[data-theme="dark"] .bc-mascot-img {
+  filter: brightness(0.85) saturate(1.15);
+  transition: filter 0.8s ease;
+}
+.bc-app[data-theme="dark"] .bc-mascot-paused .bc-mascot-img,
+.bc-app[data-theme="dark"] .bc-mood-squint .bc-mascot-img {
+  /* Don't double-stack with mood filters — let mood take precedence */
+  filter: none;
+}
+
 /* Staggered fade-in for active session UI (after brain settles & ring draws) */
 @keyframes bc-fade-up {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.bc-monitor:not(.welcome) .bc-timer       { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 0) both; }
-.bc-monitor:not(.welcome) .bc-timer-lbl   { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 1) both; }
-.bc-monitor:not(.welcome) .bc-state-chip  { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 2) both; }
-.bc-monitor:not(.welcome) .bc-controls    { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 3) both; }
-.bc-monitor:not(.welcome) .bc-pom-dots    { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 4) both; }
-/* Completed-state controls: dual CTA driven by beats (see .beat-cta below) */
+/* Eyebrow (above ring) animates first, then timer, then controls */
+.bc-monitor:not(.welcome) .bc-ring-eyebrow { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 0) both; }
+.bc-monitor:not(.welcome) .bc-timer        { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 1) both; }
+.bc-monitor:not(.welcome) .bc-controls     { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 2) both; }
+.bc-monitor:not(.welcome) .bc-pom-dots     { animation: bc-fade-up var(--dur-slow) var(--ease-out) calc(1.3s + var(--stagger) * 3) both; }
+
+/* ─── EYEBROW: state label + chip above the ring ─── */
+.bc-ring-eyebrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  z-index: 2;
+  margin-bottom: var(--space-1);
+}
+/* Completed-state controls: dual CTA, fades in shortly after the totals */
 .bc-controls-done {
   flex-direction: row !important;
   flex-wrap: wrap;
@@ -515,25 +685,13 @@
 }
 .bc-done-btn,
 .bc-done-btn-sec {
-  opacity: 0;
-  transform: translateY(10px) scale(0.96);
-  pointer-events: none;
-  transition:
-    opacity 0.5s var(--ease-out),
-    transform 0.5s var(--ease-pop),
-    box-shadow 0.5s var(--ease-out);
+  animation: bc-fade-up 0.55s var(--ease-out) 0.5s both;
 }
-.bc-monitor.beat-cta .bc-done-btn,
-.bc-monitor.beat-cta .bc-done-btn-sec {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-  pointer-events: auto;
-}
-.bc-monitor.beat-cta .bc-done-btn {
+.bc-done-btn {
   box-shadow: 0 8px 24px oklch(50% 0.22 234 / 0.35);
 }
-.bc-monitor.beat-cta .bc-done-btn-sec {
-  transition-delay: 0.08s;
+.bc-done-btn-sec {
+  animation-delay: 0.6s;
 }
 
 /* ─── FOCUSING BEAT: 800ms ritual between start click and calibration ─── */
@@ -567,13 +725,21 @@
 .bc-monitor.completed {
   justify-content: flex-start;
   padding-top: var(--space-2);
-  padding-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  gap: var(--space-1);
+  overflow-y: auto;              /* completed view can be tall: scroll instead of clipping the buttons */
 }
 .bc-monitor.completed .bc-ring-wrap {
-  transform: scale(0.82);
+  /* Shrink the ring more aggressively in completed mode so the breakdown
+     and the CTAs comfortably fit without resizing the window. */
+  transform: scale(0.6);
   transform-origin: top center;
-  margin-bottom: -56px;          /* 8×7 */
+  margin-bottom: -120px;
   transition: transform var(--dur-state) var(--ease-out), margin-bottom var(--dur-state) var(--ease-out);
+}
+.bc-monitor.completed .bc-ring-pct {
+  /* Drop the % labels around the ring — SessionTotals already shows them. */
+  display: none;
 }
 .bc-monitor.completed .bc-ring-seg {
   opacity: 1;
@@ -582,7 +748,7 @@
 }
 .bc-monitor.completed .bc-ring-track {
   transition: stroke var(--dur-state) var(--ease-out);
-  stroke: oklch(90% 0.02 220);
+  stroke: oklch(90% 0.02 225);
 }
 .bc-monitor.completed .bc-brain-stage {
   transform: scale(1.08) translateY(-2px);
@@ -600,15 +766,32 @@
   transform: scale(1.25) translateY(26px);
 }
 .bc-monitor.welcome .bc-ring-info {
-  margin-top: var(--space-2);
+  margin-top: var(--space-3);
+  gap: 6px;
   animation: bc-up 0.5s ease both;
 }
+.bc-monitor.welcome .bc-idle-eyebrow {
+  animation: bc-up 0.5s var(--ease-out) 0.05s both;
+}
 .bc-monitor.welcome .bc-idle-title {
-  font-size: 1rem;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: clamp(1.625rem, 2.4vw, 2rem); /* 26→32px */
+  font-weight: 700;
+  color: var(--bc-text);
+  letter-spacing: -0.024em;
+  line-height: 1.05;
+  text-wrap: balance;
+  max-width: 14ch;
+  animation: bc-up 0.55s var(--ease-out) 0.15s both;
 }
 .bc-monitor.welcome .bc-idle-hint {
-  font-size: var(--text-ui);
-  max-width: 192px;       /* 8×24 */
+  font-size: var(--text-md);
+  font-weight: 500;
+  color: var(--bc-text-muted);
+  line-height: 1.4;
+  max-width: 26ch;
+  letter-spacing: -0.005em;
+  animation: bc-up 0.55s var(--ease-out) 0.28s both;
 }
 .bc-monitor.welcome .bc-setup {
   margin-top: var(--space-3);
@@ -616,7 +799,9 @@
 .bc-monitor.welcome .bc-start-btn {
   padding: var(--space-1) var(--space-3);
   font-size: 0.875rem;
-  box-shadow: 0 6px 22px oklch(50% 0.22 234 / 0.4);
+  box-shadow:
+    0 6px 22px oklch(50% 0.18 234 / 0.3),
+    0 1px 0 oklch(100% 0 0 / 0.18) inset;
 }
 
 .bc-timer {
@@ -631,26 +816,30 @@
 .bc-timer.free { color: var(--bc-text-mid); }
 
 .bc-timer-lbl {
-  font-size: var(--text-sm); font-weight: 600;
+  font-size: var(--text-sm); font-weight: 700;
   color: var(--bc-text-muted);
-  text-transform: uppercase; letter-spacing: 0.1em;
+  text-transform: uppercase; letter-spacing: 0.18em;
 }
 .bc-state-chip {
-  display: inline-flex; align-items: center; gap: var(--space-0);
-  padding: var(--space-0) var(--space-1); border-radius: var(--radius-pill);
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: 6px 14px; border-radius: var(--radius-pill);
   /* --bc-state is set inline by MonitorView from CFG[state].hex */
-  background: color-mix(in oklch, var(--bc-state, var(--bc-green)) 14%, var(--bc-surface));
-  border: 1px solid color-mix(in oklch, var(--bc-state, var(--bc-green)) 40%, transparent);
-  transition: background 0.5s, border-color 0.5s, color 0.5s;
+  background: color-mix(in oklch, var(--bc-state, var(--bc-green)) 16%, var(--bc-surface));
+  border: 1.5px solid color-mix(in oklch, var(--bc-state, var(--bc-green)) 48%, transparent);
+  box-shadow: 0 1px 0 oklch(100% 0 0 / 0.5) inset, 0 4px 14px color-mix(in oklch, var(--bc-state, var(--bc-green)) 18%, transparent);
+  transition: background 0.5s, border-color 0.5s, color 0.5s, box-shadow 0.5s;
 }
 .bc-state-chip-dot {
-  width: 8px; height: 8px; border-radius: 50%;
+  width: 9px; height: 9px; border-radius: 50%;
   background: var(--bc-state, var(--bc-green));
-  box-shadow: 0 0 6px color-mix(in oklch, var(--bc-state, var(--bc-green)) 70%, transparent);
+  box-shadow: 0 0 8px color-mix(in oklch, var(--bc-state, var(--bc-green)) 80%, transparent);
   animation: bc-blink 2s infinite;
+  flex-shrink: 0;
 }
 .bc-state-chip-label {
-  font-size: var(--text-sm); font-weight: 600;
+  font-size: var(--text-ui);
+  font-weight: 700;
+  letter-spacing: 0.01em;
   color: var(--bc-state, var(--bc-green));
 }
 .bc-app[data-theme="dark"] .bc-state-chip {
@@ -666,7 +855,7 @@
   z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
   padding: var(--space-2) var(--space-3);
   pointer-events: auto;
   opacity: 0;
@@ -794,14 +983,35 @@
 
 .bc-ring-info {
   display: flex; flex-direction: column; align-items: center; gap: var(--space-1);
-  margin-top: var(--space-2); z-index: 1; min-height: 72px;
+  margin-top: var(--space-1); z-index: 1; min-height: 48px;
 }
 .bc-monitor.completed .bc-ring-info {
   min-height: auto;
   margin-top: 0;
 }
-.bc-idle-title { font-size: var(--text-md); font-weight: 600; color: var(--bc-text-mid); }
-.bc-idle-hint { font-size: var(--text-ui); color: var(--bc-text-muted); text-align: center; line-height: 1.55; max-width: 160px; }
+.bc-idle-eyebrow {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--bc-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  text-align: center;
+}
+.bc-idle-title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--bc-text-mid);
+  text-align: center;
+  letter-spacing: -0.005em;
+}
+.bc-idle-hint {
+  font-size: var(--text-ui);
+  color: var(--bc-text-muted);
+  text-align: center;
+  line-height: 1.55;
+  max-width: 22ch;
+}
 
 .bc-setup {
   z-index: 1;
@@ -844,13 +1054,17 @@
   font-family: 'Space Grotesk', sans-serif;
   font-size: 0.875rem; font-weight: 700;
   letter-spacing: 0.01em;
-  box-shadow: 0 4px 16px oklch(50% 0.22 234 / 0.32);
+  box-shadow:
+    0 4px 16px oklch(50% 0.18 234 / 0.25),
+    0 1px 0 oklch(100% 0 0 / 0.15) inset;
   transition: all var(--dur-base) var(--ease-out);
 }
 .bc-start-btn:hover {
   background: oklch(46% 0.22 234);
   transform: translateY(-1px);
-  box-shadow: 0 8px 28px oklch(50% 0.22 234 / 0.45);
+  box-shadow:
+    0 6px 24px oklch(50% 0.18 234 / 0.35),
+    0 1px 0 oklch(100% 0 0 / 0.2) inset;
 }
 .bc-start-btn:focus-visible { outline: 2px solid var(--bc-green); outline-offset: 2px; }
 
@@ -967,8 +1181,8 @@
 
 .bc-controls {
   z-index: 1;
-  display: flex; flex-direction: column; align-items: center; gap: var(--space-1);
-  margin-top: var(--space-3); animation: bc-up 0.2s ease;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+  margin-top: var(--space-4); animation: bc-up 0.2s ease;
 }
 .bc-ctrl-row { display: flex; align-items: center; gap: var(--space-1); }
 .bc-ctrl-btn {
@@ -1014,67 +1228,37 @@
 .bc-pom-dot.done { background: var(--bc-green); border-color: var(--bc-green); }
 .bc-pom-dot.curr { border-color: var(--bc-green); background: oklch(50% 0.22 234 / 0.2); animation: bc-pulse 1.2s infinite; }
 @keyframes bc-pulse { 0%,100% { transform: scale(1) } 50% { transform: scale(0.65) } }
-.bc-pom-info { font-size: var(--text-sm); color: var(--bc-text-muted); font-weight: 500; margin-left: var(--space-1); font-variant-numeric: tabular-nums; }
+.bc-pom-info {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--text-sm);
+  color: var(--bc-text-mid);
+  font-weight: 700;
+  margin-left: var(--space-1);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
 
-/* ─── COMPLETED STACK: insight (peak) + legend (color → state mapping) ─── */
+/* ─── COMPLETED STACK: insight (peak) + breakdown list ─── */
 .bc-done-stack {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   width: 100%;
-  max-width: 360px;
+  max-width: 440px;
 }
 .bc-done-insight {
+  font-family: 'Space Grotesk', sans-serif;
   font-size: var(--text-xl);
-  font-weight: 600;
+  font-weight: 700;
   color: var(--bc-text);
   text-align: center;
-  letter-spacing: -0.01em;
-  line-height: 1.3;
-  max-width: 320px;
+  letter-spacing: -0.022em;
+  line-height: 1.2;
+  max-width: 18ch;
   text-wrap: balance;
-  opacity: 0;
-  transform: translateY(8px);
-  transition: opacity 0.6s var(--ease-out), transform 0.6s var(--ease-out);
+  animation: bc-fade-up 0.6s var(--ease-out) 0.1s both;
 }
-.bc-monitor.beat-insight .bc-done-insight,
-.bc-monitor.beat-breakdown .bc-done-insight,
-.bc-monitor.beat-cta .bc-done-insight {
-  opacity: 1;
-  transform: translateY(0);
-}
-.bc-done-legend {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--space-1) var(--space-2);
-  opacity: 0;
-  transform: translateY(6px);
-  transition: opacity 0.5s var(--ease-out), transform 0.5s var(--ease-out);
-}
-.bc-monitor.beat-breakdown .bc-done-legend,
-.bc-monitor.beat-cta .bc-done-legend {
-  opacity: 1;
-  transform: translateY(0);
-}
-.bc-done-leg-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--bc-text-muted);
-  letter-spacing: 0.01em;
-}
-.bc-done-leg-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  flex-shrink: 0;
-}
-.bc-done-leg-lbl {
-  white-space: nowrap;
-}
-
 /* ─── RING PERCENTAGE LABELS (summary mode) ─── */
 .bc-ring-pct {
   font-family: 'JetBrains Mono', monospace;
@@ -1875,111 +2059,142 @@
   .bc-monitor.farewell .bc-brain-shadow { animation: none !important; opacity: 1 !important; transition: none !important; }
 }
 
-/* ── SESSION TOTALS PANEL (post-completion) ─────────────────────── */
+/* ── SESSION TOTALS (post-completion): hero metrics + breakdown list ── */
 .bc-done-totals {
   width: 100%;
-  max-width: 360px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  margin-top: var(--space-2);
-  opacity: 0;
-  transform: translateY(6px);
-  transition: opacity 0.5s var(--ease-out) 0.2s, transform 0.5s var(--ease-out) 0.2s;
-}
-.bc-monitor.beat-detail .bc-done-totals {
-  opacity: 1;
-  transform: translateY(0);
-}
-.bc-done-totals-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
   gap: var(--space-2);
+  animation: bc-fade-up 0.55s var(--ease-out) 0.3s both;
+}
+
+/* Hero header: 3 metrics. Lead column ("Foco") owns the score. */
+.bc-done-totals-header {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  align-items: end;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--bc-border);
+}
+.bc-done-totals-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+  text-align: right;
+}
+.bc-done-totals-metric--lead {
+  align-items: flex-start;
+  text-align: left;
+}
+.bc-done-totals-key {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--bc-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
 }
 .bc-done-totals-score {
   font-family: 'JetBrains Mono', monospace;
   font-size: var(--text-2xl);
   font-weight: 700;
   color: var(--bc-green);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.022em;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
-.bc-done-totals-duration {
+.bc-done-totals-mono {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 1rem;
+  font-size: var(--text-lg);
   font-weight: 600;
-  color: var(--bc-text-muted);
-  letter-spacing: -0.01em;
+  color: var(--bc-text);
+  letter-spacing: -0.018em;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
-.bc-done-totals-streak {
-  text-align: center;
-  font-size: var(--text-sm);
-  color: var(--bc-text-muted);
-  font-weight: 500;
-}
-.bc-done-totals-streak strong {
-  color: var(--bc-text-mid);
-  font-weight: 700;
-}
-.bc-done-totals-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--space-1);
-}
-.bc-done-totals-cell {
+
+/* Breakdown list: rows of dot · label · bar · time · pct. */
+.bc-done-totals-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-0);
-  padding: var(--space-1);
-  background: var(--bc-surface);
-  border: 1px solid var(--bc-border);
-  border-radius: var(--radius-sm);
 }
-.bc-done-totals-cell-top {
-  display: flex;
+.bc-done-totals-row {
+  display: grid;
+  grid-template-columns: 8px minmax(96px, 110px) 1fr 56px 36px;
   align-items: center;
-  gap: var(--space-0);
+  gap: var(--space-2);
+  padding: 6px 0;
+  animation: bc-fade-up 0.5s var(--ease-out) both;
 }
-.bc-done-totals-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
+.bc-done-totals-row + .bc-done-totals-row {
+  border-top: 1px solid var(--bc-border);
 }
-.bc-done-totals-lbl {
-  font-size: var(--text-xs);
+.bc-done-totals-rdot {
+  width: 8px; height: 8px; border-radius: 50%;
+}
+.bc-done-totals-rlbl {
+  font-size: var(--text-ui);
   font-weight: 600;
-  color: var(--bc-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
+  color: var(--bc-text);
+  letter-spacing: -0.005em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.bc-done-totals-num {
+.bc-done-totals-rbar {
+  position: relative;
+  height: 6px;
+  background: var(--bc-surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.bc-done-totals-rfill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transform-origin: left;
+  animation: bc-bar-fill 0.9s var(--ease-out) 0.25s both;
+}
+@keyframes bc-bar-fill {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+.bc-done-totals-rtime {
   font-family: 'JetBrains Mono', monospace;
   font-size: var(--text-ui);
   font-weight: 700;
   color: var(--bc-text);
-  letter-spacing: -0.01em;
-  line-height: 1;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.012em;
+  text-align: right;
+  line-height: 1;
 }
-.bc-done-totals-bar {
-  height: 3px;
-  background: var(--bc-surface-2);
-  border-radius: 2px;
-  overflow: hidden;
+.bc-done-totals-rpct {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--bc-text-muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.005em;
+  text-align: right;
+  line-height: 1;
 }
-.bc-done-totals-bar-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.8s ease;
+
+@media (max-width: 520px) {
+  .bc-done-totals-row {
+    grid-template-columns: 8px minmax(0, 1fr) 56px 36px;
+    gap: var(--space-1);
+  }
+  .bc-done-totals-rbar { display: none; }
 }
+
 @media (prefers-reduced-motion: reduce) {
   .bc-done-totals { transition: none !important; }
-  .bc-done-totals-bar-fill { transition: none !important; }
+  .bc-done-totals-row { animation: none !important; opacity: 1; transform: none; }
+  .bc-done-totals-rfill { animation: none !important; transform: scaleX(1); }
 }

@@ -1,9 +1,9 @@
 import { CFG, STATES } from "./state";
 
 interface SessionStats {
-  final_score: number;
-  longest_focus_streak: number;
-  segments_seconds: { working: number; away: number; social: number; absent: number };
+  final_score?: number;
+  longest_focus_streak?: number;
+  segments_seconds?: { working?: number; away?: number; social?: number; absent?: number };
 }
 
 function fmt(secs: number): string {
@@ -12,42 +12,60 @@ function fmt(secs: number): string {
 }
 
 export function SessionTotals({ stats }: { stats: SessionStats | null }) {
-  if (!stats) return null;
-
-  const { final_score, longest_focus_streak, segments_seconds: segs } = stats;
+  // Always render — fall back to zeros if the backend didn't return data.
+  // Returning null here was masking real layout/data issues post-completion.
+  const final_score = Math.round(stats?.final_score ?? 0);
+  const longest_focus_streak = stats?.longest_focus_streak ?? 0;
+  const rawSegs = stats?.segments_seconds ?? {};
+  const segs = {
+    working: rawSegs.working ?? 0,
+    away: rawSegs.away ?? 0,
+    social: rawSegs.social ?? 0,
+    absent: rawSegs.absent ?? 0,
+  };
   const totalSec = segs.working + segs.away + segs.social + segs.absent;
 
   return (
     <div className="bc-done-totals">
       <div className="bc-done-totals-header">
-        <span className="bc-done-totals-score">{final_score}%</span>
-        <span className="bc-done-totals-duration">{fmt(totalSec)}</span>
+        <div className="bc-done-totals-metric bc-done-totals-metric--lead">
+          <span className="bc-done-totals-key">Foco</span>
+          <span className="bc-done-totals-score">{final_score}%</span>
+        </div>
+        <div className="bc-done-totals-metric">
+          <span className="bc-done-totals-key">Total</span>
+          <span className="bc-done-totals-mono">{fmt(totalSec)}</span>
+        </div>
+        <div className="bc-done-totals-metric">
+          <span className="bc-done-totals-key">Racha</span>
+          <span className="bc-done-totals-mono">{fmt(longest_focus_streak)}</span>
+        </div>
       </div>
-      <div className="bc-done-totals-streak">
-        Racha más larga: <strong>{fmt(longest_focus_streak)}</strong>
-      </div>
-      <div className="bc-done-totals-grid">
-        {STATES.map((s) => {
+      <ul className="bc-done-totals-list">
+        {STATES.map((s, i) => {
           const sec = segs[s];
           const pct = totalSec > 0 ? sec / totalSec : 0;
           const c = CFG[s];
           return (
-            <div key={s} className="bc-done-totals-cell">
-              <div className="bc-done-totals-cell-top">
-                <span className="bc-done-totals-dot" style={{ background: c.hex }} />
-                <span className="bc-done-totals-lbl">{c.label}</span>
-              </div>
-              <div className="bc-done-totals-num">{fmt(sec)}</div>
-              <div className="bc-done-totals-bar">
-                <div
-                  className="bc-done-totals-bar-fill"
+            <li
+              key={s}
+              className="bc-done-totals-row"
+              style={{ animationDelay: `${0.18 + i * 0.08}s` }}
+            >
+              <span className="bc-done-totals-rdot" style={{ background: c.hex }} />
+              <span className="bc-done-totals-rlbl">{c.label}</span>
+              <span className="bc-done-totals-rbar" aria-hidden>
+                <span
+                  className="bc-done-totals-rfill"
                   style={{ width: `${Math.round(pct * 100)}%`, background: c.hex }}
                 />
-              </div>
-            </div>
+              </span>
+              <span className="bc-done-totals-rtime">{fmt(sec)}</span>
+              <span className="bc-done-totals-rpct">{Math.round(pct * 100)}%</span>
+            </li>
           );
         })}
-      </div>
+      </ul>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Coffee, Pause, Play, RotateCcw, SkipForward, X } from "lucide-react";
-import { BrainMascot } from "./BrainMascot";
+import { BrainMascot, type MascotMood } from "./BrainMascot";
 import { Ring } from "./Ring";
 import { SessionSetup } from "./SessionSetup";
 import { SessionTotals } from "./SessionTotals";
@@ -10,7 +10,7 @@ import { CameraModal } from "./CameraModal";
 import { CalibrationOverlay } from "./CalibrationOverlay";
 import { MonitorPanelLeft, MonitorPanelRight } from "./MonitorPanels";
 import { useBackendData, useFocusControl, useFocusTracker, usePomodoro, useSessions, type NormalizationMode } from "./hooks";
-import { CFG, STATES, type SessionConfig, type BCState } from "./state";
+import { CFG, type SessionConfig, type BCState } from "./state";
 import { pickInsight } from "./insights";
 
 const VIDEO_URL = "http://127.0.0.1:8765/video_feed";
@@ -31,8 +31,6 @@ const ENV_HINT: Record<string, string> = {
   moved_further: "Te has alejado de la cámara",
 };
 
-type CompletedBeat = "celebrate" | "insight" | "breakdown" | "cta" | "detail";
-
 interface MonitorViewProps {
   camOn: boolean;
   setCamOn: (v: boolean) => void;
@@ -50,10 +48,11 @@ function configToNormMode(cfg: SessionConfig | null, isBreak = false): Normaliza
 export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorViewProps) {
   const [pendingConfig, setPendingConfig] = useState<SessionConfig | null>(null);
   const [focusing, setFocusing] = useState(false);
-  const [completedBeat, setCompletedBeat] = useState<CompletedBeat>("celebrate");
   const [lastStats, setLastStats] = useState<any>(null);
   const [farewell, setFarewell] = useState(false);
   const lastSegsRef = useRef({ working: 0, away: 0, social: 0, absent: 0 });
+  const lastSegSecsRef = useRef({ working: 0, away: 0, social: 0, absent: 0 });
+  const lastScoreRef = useRef(100);
   const stopCalledRef = useRef(false);
   const farewellTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pom = usePomodoro();
@@ -67,15 +66,32 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
 
   const focusActive = pom.running || pendingConfig !== null;
   const resetKey = pom.config ? `${pom.done}-${pom.isBreak}` : undefined;
-  const { state, segs, segSecs, calibration, environment } = useFocusTracker(focusActive, normMode, resetKey);
+  const { state, segs, segSecs, calibration, environment, score: liveScore } = useFocusTracker(focusActive, normMode, resetKey);
   const sessions = useSessions();
   const { score: backendScore } = useBackendData();
 
   // Freeze the last live segments at completion so the ring summary is stable.
   useEffect(() => {
-    if (focusActive) lastSegsRef.current = segs;
-  }, [focusActive, segs]);
+    if (focusActive) {
+      lastSegsRef.current = segs;
+      lastSegSecsRef.current = segSecs;
+      lastScoreRef.current = liveScore;
+    }
+  }, [focusActive, segs, segSecs, liveScore]);
   const displaySegs = pom.completed ? lastSegsRef.current : segs;
+
+  // Fallback stats: if the backend's stop_session didn't return data (tracker
+  // unavailable, transient error), build a synthetic stats object from the
+  // frozen live snapshot so the breakdown still renders.
+  const effectiveStats = useMemo(() => {
+    if (!pom.completed) return null;
+    if (lastStats) return lastStats;
+    return {
+      final_score: Math.round(lastScoreRef.current),
+      longest_focus_streak: 0,
+      segments_seconds: { ...lastSegSecsRef.current },
+    };
+  }, [pom.completed, lastStats]);
 
   const idle = !pom.config && !pendingConfig;
   const isFreeflow = pom.config?.mode === "freeflow";
@@ -140,31 +156,16 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
     return () => window.removeEventListener("keydown", onKey);
   }, [pom]);
 
-  // Beat orchestration on completion: celebrate → insight → breakdown → cta
-  // On first completion, stops the session and captures stats for the panel.
+  // On first completion: stop the session and capture stats for the panel.
+  // The summary view (insight + totals + buttons) reveals via plain CSS
+  // animations on mount; no beat-class gating needed.
   useEffect(() => {
-    if (!pom.completed) {
-      setCompletedBeat("celebrate");
-      return;
-    }
-    if (!stopCalledRef.current) {
-      stopCalledRef.current = true;
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      ctrl.stopSession().then((stats: any) => {
-        if (stats) setLastStats(stats);
-      });
-    }
-    setCompletedBeat("celebrate");
-    const t1 = setTimeout(() => setCompletedBeat("insight"), 1200);
-    const t2 = setTimeout(() => setCompletedBeat("breakdown"), 3500);
-    const t3 = setTimeout(() => setCompletedBeat("cta"), 5000);
-    const t4 = setTimeout(() => setCompletedBeat("detail"), 7200);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-      clearTimeout(t4);
-    };
+    if (!pom.completed) return;
+    if (stopCalledRef.current) return;
+    stopCalledRef.current = true;
+    ctrl.stopSession().then((stats: any) => {
+      if (stats) setLastStats(stats);
+    });
   }, [pom.completed]); // ctrl.stopSession is stable, intentionally omitted
 
   const sessionDurationMin = useMemo(() => {
@@ -198,13 +199,24 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
   );
 
   const showCalibration = pendingConfig !== null;
-  const beatClass = pom.completed ? ` beat-${completedBeat}` : "";
-
   const envWarning = pom.running && environment?.warning ? ENV_HINT[environment.warning] : null;
   const showRecalibBanner = pom.running && calibration.recalibration_suggested;
 
+  // ── Mascot mood: derived from environment + session signals ──
+  const mascotMood = useMemo<MascotMood>(() => {
+    if (idle) return "normal";
+    if (environment?.warning === "too_dark") return "squint";
+    if (calibration.recalibration_suggested) return "confused";
+    if (pom.running && state === "working" && pom.elapsed >= 1200) return "sweating";
+    if (!pom.running && pom.config && !pom.completed) return "drowsy";
+    if (backendScore.pct >= 90) return "glowing";
+    return "normal";
+  }, [idle, environment, calibration, pom.running, pom.elapsed, pom.config, pom.completed, state, backendScore.pct]);
+
+  const mascotPaused = !pom.running && !!pom.config && !pom.completed && !idle;
+
   return (
-    <div className={`bc-monitor${idle ? " welcome" : ""}${pom.completed ? " completed" : ""}${focusing ? " focusing" : ""}${farewell ? " farewell" : ""}${beatClass}`}>
+    <div className={`bc-monitor${idle ? " welcome" : ""}${pom.completed ? " completed" : ""}${focusing ? " focusing" : ""}${farewell ? " farewell" : ""}`}>
       <div
         className="bc-ambient"
         style={{
@@ -212,10 +224,12 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
           /* Stronger when off-task: the room visibly tints with the state.
              Working stays calm so focus reads as a quiet presence. */
           opacity: focusing
-            ? 0.26
+            ? 0.32
             : pom.running
-              ? state === "working" ? 0.18 : 0.32
-              : 0.08,
+              ? state === "working" ? 0.22 : 0.38
+              : idle
+                ? 0.16
+                : 0.10,
         }}
       />
 
@@ -238,15 +252,31 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
         envHint={pom.running && !calibration.recalibration_suggested ? envWarning : null}
       />
 
-      <div className="bc-ring-wrap">
+      {/* Eyebrow: state chip ABOVE the ring during active sessions */}
+      {!idle && !pom.completed && !pendingConfig && pom.config && (
+        <div className="bc-ring-eyebrow">
+          {!isFreeflow && (
+            <div className="bc-state-chip" style={{ ["--bc-state" as never]: cfg.hex }}>
+              <div className="bc-state-chip-dot" />
+              <span className="bc-state-chip-label">{cfg.label}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="bc-ring-wrap" style={{ ["--bc-state-color" as never]: idle ? AURA_HEX.working : AURA_HEX[state] }}>
         <Ring segs={ringSegs} idle={idle} summary={pom.completed} />
         <div className="bc-ring-center">
+          {/* Inner glow: radial light that responds to current state */}
+          <div className="bc-ring-glow" aria-hidden />
           <div className="bc-brain-stage">
             <div className="bc-brain-float">
               <BrainMascot
                 size={200}
                 color={idle ? CFG.working.hex : pom.completed ? CFG.working.hex : cfg.hex}
                 state={idle ? "idle" : pom.completed ? "completed" : state}
+                mood={mascotMood}
+                paused={mascotPaused}
               />
             </div>
             <div className="bc-brain-shadow" aria-hidden />
@@ -258,21 +288,14 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
       <div className="bc-ring-info">
         {idle ? (
           <>
-            <div className="bc-idle-title">Sin sesión activa</div>
-            <div className="bc-idle-hint">Elige un modo para empezar</div>
+            <div className="bc-idle-eyebrow">Sin sesión activa</div>
+            <div className="bc-idle-title">Listo cuando tú lo estés.</div>
+            <div className="bc-idle-hint">Pomodoro, libre, o a tu manera.</div>
           </>
         ) : pom.completed ? (
           <div className="bc-done-stack">
             <div className="bc-done-insight">{insight}</div>
-            <div className="bc-done-legend">
-              {STATES.map((s) => (
-                <div key={s} className="bc-done-leg-item">
-                  <span className="bc-done-leg-dot" style={{ background: CFG[s].hex }} />
-                  <span className="bc-done-leg-lbl">{CFG[s].label}</span>
-                </div>
-              ))}
-            </div>
-            <SessionTotals stats={lastStats} />
+            <SessionTotals stats={effectiveStats} />
           </div>
         ) : pendingConfig ? (
           <>
@@ -280,16 +303,7 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
             <div className="bc-idle-hint">Sigue las instrucciones de la cámara</div>
           </>
         ) : (
-          <>
-            <div className={`bc-timer${pom.isBreak ? " brk" : isFreeflow ? " free" : ""}`}>{timerStr}</div>
-            <div className="bc-timer-lbl">{isFreeflow ? (pom.running ? "libre" : "pausado") : pom.isBreak ? "descansando" : "pomodoro"}</div>
-            {!isFreeflow && (
-              <div className="bc-state-chip" style={{ ["--bc-state" as never]: cfg.hex }}>
-                <div className="bc-state-chip-dot" />
-                <span className="bc-state-chip-label">{cfg.label}</span>
-              </div>
-            )}
-          </>
+          <div className={`bc-timer${pom.isBreak ? " brk" : isFreeflow ? " free" : ""}`}>{timerStr}</div>
         )}
       </div>
 
@@ -312,12 +326,12 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
             <button className="bc-ctrl-btn pp" onClick={() => pom.setRunning(!pom.running)} disabled={pom.completed}>
               {pom.running ? (
                 <>
-                  <Pause size={14} strokeWidth={2} fill="currentColor" />
+                  <Pause size={16} strokeWidth={1.75} fill="currentColor" />
                   <span>Pausar</span>
                 </>
               ) : (
                 <>
-                  <Play size={14} strokeWidth={2} fill="currentColor" />
+                  <Play size={16} strokeWidth={1.75} fill="currentColor" />
                   <span>Continuar</span>
                 </>
               )}
@@ -330,7 +344,7 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
               </button>
             )}
             <button className="bc-ctrl-btn dng icon-only" onClick={handleFinalize} aria-label="Terminar sesión" title="Terminar" disabled={farewell}>
-              <X size={14} strokeWidth={1.75} />
+              <X size={16} strokeWidth={1.75} />
             </button>
           </div>
           {!isFreeflow && (

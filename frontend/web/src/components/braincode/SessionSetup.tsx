@@ -7,7 +7,7 @@ interface SessionSetupProps {
   onStart: (cfg: SessionConfig, cameraIndex: number) => void;
 }
 
-const STROKE = 1.5;
+const STROKE = 1.6;
 const LS_KEY = "bc:last-session";
 
 type PomConfig = { mode: "pomodoro"; workMin: number; breakMin: number; totalPoms: number };
@@ -65,7 +65,7 @@ export function SessionSetup({ onStart }: SessionSetupProps) {
     <div className="bc-setup">
       {!customizing ? (
         <button className="bc-start-btn" onClick={() => handleStart(cfg)}>
-          <Play size={14} strokeWidth={2} fill="currentColor" />
+          <Play size={16} strokeWidth={1.75} fill="currentColor" />
           <span>Empezar — {cfg.workMin} min</span>
         </button>
       ) : (
@@ -115,7 +115,7 @@ export function SessionSetup({ onStart }: SessionSetupProps) {
           </div>
           <div className="bc-cfg-sep" />
           <button className="bc-cfg-go" onClick={() => handleStart(cfg)}>
-            <Play size={12} strokeWidth={2} fill="currentColor" />
+            <Play size={14} strokeWidth={1.75} fill="currentColor" />
             <span>Iniciar</span>
           </button>
         </div>

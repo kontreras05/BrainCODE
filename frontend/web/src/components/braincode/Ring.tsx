@@ -26,38 +26,30 @@ export function Ring({ segs, idle, summary = false }: RingProps) {
     a = o.s1;
     return o;
   });
-  const track = idle ? "oklch(89% 0.016 62)" : "oklch(89% 0.014 62)";
-  const tickOuter = r + sw / 2 + 22;
-  const tickColor = "oklch(60% 0.02 62)";
-  const ticks = Array.from({ length: 60 }, (_, i) => {
-    const isHour = i % 5 === 0;
-    const len = isHour ? 10 : 4;
-    const inner = tickOuter - len;
-    const ang = (i / 60) * TAU;
-    const x1 = cx + tickOuter * Math.cos(ang);
-    const y1 = cy + tickOuter * Math.sin(ang);
-    const x2 = cx + inner * Math.cos(ang);
-    const y2 = cy + inner * Math.sin(ang);
-    const finalOpacity = isHour ? 0.55 : 0.3;
+  const track = idle ? "oklch(89% 0.016 225)" : "oklch(89% 0.014 225)";
+  const dotRadius = r + sw / 2 + 14;
+  const dotColor = "oklch(60% 0.03 225)";
+  const ticks = Array.from({ length: 12 }, (_, i) => {
+    const ang = (i / 12) * TAU;
+    const dotCx = cx + dotRadius * Math.cos(ang);
+    const dotCy = cy + dotRadius * Math.sin(ang);
+    const finalOpacity = 0.4;
     return (
-      <line
+      <circle
         key={i}
         className={idle ? undefined : "bc-tick-reveal"}
         style={
           idle
             ? { opacity: finalOpacity }
             : ({
-                animationDelay: `${0.8 + (i / 60) * 1}s`,
+                animationDelay: `${0.8 + (i / 12) * 1}s`,
                 ["--bc-tick-op" as string]: finalOpacity,
               } as React.CSSProperties)
         }
-        x1={x1}
-        y1={y1}
-        x2={x2}
-        y2={y2}
-        stroke={tickColor}
-        strokeWidth={isHour ? 2 : 1}
-        strokeLinecap="round"
+        cx={dotCx}
+        cy={dotCy}
+        r={2.5}
+        fill={dotColor}
       />
     );
   });

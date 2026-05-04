@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, BarChart3, Bell, Camera, FlaskConical, Moon, Settings, Sun } from "lucide-react";
+import { Activity, BarChart3, Bell, Camera, Beaker, Moon, Settings, Sun } from "lucide-react";
 import { MonitorView } from "./MonitorView";
 import { MetricsView } from "./MetricsView";
 import { JarsView } from "./JarsView";
@@ -7,7 +7,7 @@ import { CameraModal } from "./CameraModal";
 import { SettingsModal } from "./SettingsModal";
 import { CFG, type BCState } from "./state";
 
-const ICON_STROKE = 1.5;
+const ICON_STROKE = 1.6;
 const ICON_NAV = 16;
 
 type Tab = "monitor" | "metrics" | "jars";
@@ -74,7 +74,7 @@ export function BrainCodeApp() {
             {([
               { id: "monitor" as const, Icon: Activity, label: "Monitor" },
               { id: "metrics" as const, Icon: BarChart3, label: "Métricas" },
-              { id: "jars" as const, Icon: FlaskConical, label: "Jars" },
+              { id: "jars" as const, Icon: Beaker, label: "Jars" },
             ]).map((n) => (
               <button key={n.id} className={`bc-nav-btn${tab === n.id ? " active" : ""}`} onClick={() => setTab(n.id)}>
                 <span className="bc-nav-icon">
