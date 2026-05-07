@@ -214,12 +214,12 @@ class FocusTracker:
         self._gaze_threshold_right = 0.15
         self._gaze_threshold_up = 0.20
         self._gaze_threshold_down = 0.20
-        self._gaze_min_threshold_h = 0.08
-        self._gaze_min_threshold_v = 0.10
+        self._gaze_min_threshold_h = 0.12
+        self._gaze_min_threshold_v = 0.15
 
-        self._head_yaw_threshold = 25
-        self._head_pitch_up_threshold = 20
-        self._head_pitch_down_threshold = 35
+        self._head_yaw_threshold = 30
+        self._head_pitch_up_threshold = 25
+        self._head_pitch_down_threshold = 40
 
         # Calibrated blink threshold (per-user; some users have heavier eyelids)
         self._blink_threshold = 0.5
@@ -238,8 +238,8 @@ class FocusTracker:
         self._gaze_v_history = deque(maxlen=self._gaze_history_size)
         
         # --- Gaze voting system: require N of last M frames off-screen ---
-        self._gaze_vote_window = 8   # look at last M frames
-        self._gaze_vote_threshold = 5  # require N frames to be "off"
+        self._gaze_vote_window = 15   # look at last M frames
+        self._gaze_vote_threshold = 10  # require N frames to be "off"
         self._gaze_vote_buffer = deque(maxlen=self._gaze_vote_window)
 
     @staticmethod
@@ -445,8 +445,14 @@ class FocusTracker:
     def get_session_stats(self) -> Dict:
         """Snapshot of session stats without stopping the tracker."""
         with self._state_lock:
+            total_seg_time = sum(self._segment_seconds.values())
+            if total_seg_time > 0:
+                final_score = (self._segment_seconds["working"] / total_seg_time) * 100.0
+            else:
+                final_score = float(self._score)
+
             return {
-                "final_score": float(self._score),
+                "final_score": final_score,
                 "total_focused_time": int(self._total_focused_time),
                 "total_distracted_time": int(self._total_distracted_time),
                 "total_absent_time": int(self._total_absent_time),
@@ -541,9 +547,14 @@ class FocusTracker:
             
             # --- PARALLEL RECOGNITION ---
             # Run all heavy ML models in parallel to prevent frame rate drops (race condition fix)
-            future_face = self._executor.submit(self.detector.detect, mp_image)
-            future_gesture = self._executor.submit(self.gesture_recognizer.recognize, mp_image)
-            future_pose = self._executor.submit(self.pose_detector.detect, mp_image)
+            # Create separate mp.Image instances for each thread to prevent MediaPipe packet ownership crashes
+            img_face = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
+            img_gesture = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
+            img_pose = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
+            
+            future_face = self._executor.submit(self.detector.detect, img_face)
+            future_gesture = self._executor.submit(self.gesture_recognizer.recognize, img_gesture)
+            future_pose = self._executor.submit(self.pose_detector.detect, img_pose)
 
             detection_result = future_face.result()
             gesture_result = future_gesture.result()
@@ -875,13 +886,13 @@ class FocusTracker:
         down_devs = self._reject_outliers_iqr([s[1] - self._gaze_baseline_v for s in (bl + br)])
 
         self._gaze_threshold_left = max(self._gaze_min_threshold_h,
-                                        float(np.percentile(left_devs, 95))) if left_devs else self._gaze_min_threshold_h
+                                        float(np.percentile(left_devs, 95)) * 1.2) if left_devs else self._gaze_min_threshold_h
         self._gaze_threshold_right = max(self._gaze_min_threshold_h,
-                                         float(np.percentile(right_devs, 95))) if right_devs else self._gaze_min_threshold_h
+                                         float(np.percentile(right_devs, 95)) * 1.2) if right_devs else self._gaze_min_threshold_h
         self._gaze_threshold_up = max(self._gaze_min_threshold_v,
-                                      float(np.percentile(up_devs, 95))) if up_devs else self._gaze_min_threshold_v
+                                      float(np.percentile(up_devs, 95)) * 1.2) if up_devs else self._gaze_min_threshold_v
         self._gaze_threshold_down = max(self._gaze_min_threshold_v,
-                                        float(np.percentile(down_devs, 95))) if down_devs else self._gaze_min_threshold_v
+                                        float(np.percentile(down_devs, 95)) * 1.2) if down_devs else self._gaze_min_threshold_v
 
         print(f"[CALIB] Asymmetric thresholds — "
               f"L={self._gaze_threshold_left:.3f} R={self._gaze_threshold_right:.3f} "

@@ -21,9 +21,11 @@ def get_active_window_title() -> str:
 def _classify(title: str) -> str:
     if not title:
         return "Unknown"
-    lowered = title.lower()
+    import re
     for keyword in SOCIAL_MEDIA_KEYWORDS:
-        if keyword.lower() in lowered:
+        # Usamos \b para asegurar que el keyword sea una palabra completa
+        pattern = r'\b' + re.escape(keyword) + r'\b'
+        if re.search(pattern, title, re.IGNORECASE):
             return "Social Media"
     return "Productivity/Other"
 

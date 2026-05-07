@@ -65,8 +65,9 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
   }, [pom.config, pendingConfig, pom.isBreak]);
 
   const focusActive = pom.running || pendingConfig !== null;
+  const sessionActive = (pom.config !== null || pendingConfig !== null) && !pom.completed;
   const resetKey = pom.config ? `${pom.done}-${pom.isBreak}` : undefined;
-  const { state, segs, segSecs, calibration, environment, score: liveScore } = useFocusTracker(focusActive, normMode, resetKey);
+  const { state, segs, segSecs, calibration, environment, score: liveScore } = useFocusTracker(sessionActive, !focusActive, normMode, resetKey);
   const sessions = useSessions();
   const { score: backendScore } = useBackendData();
 
@@ -86,10 +87,13 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
   const effectiveStats = useMemo(() => {
     if (!pom.completed) return null;
     if (lastStats) return lastStats;
+    const segs = lastSegSecsRef.current;
+    const totalSegTime = segs.working + segs.away + segs.social + segs.absent;
+    const final_score = totalSegTime > 0 ? Math.round((segs.working / totalSegTime) * 100) : Math.round(lastScoreRef.current);
     return {
-      final_score: Math.round(lastScoreRef.current),
+      final_score,
       longest_focus_streak: 0,
-      segments_seconds: { ...lastSegSecsRef.current },
+      segments_seconds: { ...segs },
     };
   }, [pom.completed, lastStats]);
 

@@ -144,16 +144,38 @@ export function useLiveState(active: boolean, intervalMs = 300) {
   return live;
 }
 
-export function useFocusTracker(active: boolean, normMode: NormalizationMode, resetKey?: string) {
-  const live = useLiveState(active);
+export function useFocusTracker(
+  sessionActive: boolean,
+  isPaused: boolean,
+  normMode: NormalizationMode,
+  resetKey?: string
+) {
+  const live = useLiveState(sessionActive);
   const lastEmittedState = useRef<BCState | null>(null);
 
   const [baseSegs, setBaseSegs] = useState({ working: 0, away: 0, social: 0, absent: 0 });
+  const [pauseOffset, setPauseOffset] = useState({ working: 0, away: 0, social: 0, absent: 0 });
   const resetKeyRef = useRef(resetKey);
+  const lastLiveRef = useRef<LiveState | null>(null);
+
+  useEffect(() => {
+    if (live && isPaused && lastLiveRef.current) {
+      const prev = lastLiveRef.current.segments_seconds;
+      const curr = live.segments_seconds;
+      setPauseOffset((po) => ({
+        working: po.working + Math.max(0, curr.working - prev.working),
+        away: po.away + Math.max(0, curr.away - prev.away),
+        social: po.social + Math.max(0, curr.social - prev.social),
+        absent: po.absent + Math.max(0, curr.absent - prev.absent),
+      }));
+    }
+    lastLiveRef.current = live;
+  }, [live, isPaused]);
 
   useEffect(() => {
     if (live && resetKey !== resetKeyRef.current) {
       setBaseSegs(live.segments_seconds);
+      setPauseOffset({ working: 0, away: 0, social: 0, absent: 0 });
       resetKeyRef.current = resetKey;
     }
   }, [live, resetKey]);
@@ -169,12 +191,12 @@ export function useFocusTracker(active: boolean, normMode: NormalizationMode, re
   const data = live ?? DEFAULT_LIVE;
   const rawSeg = data.segments_seconds;
 
-  // Subtract base segments to get only the current phase's segments
+  // Subtract base segments and accumulated pause offset
   const seg = resetKey !== undefined ? {
-    working: Math.max(0, rawSeg.working - baseSegs.working),
-    away: Math.max(0, rawSeg.away - baseSegs.away),
-    social: Math.max(0, rawSeg.social - baseSegs.social),
-    absent: Math.max(0, rawSeg.absent - baseSegs.absent),
+    working: Math.max(0, rawSeg.working - baseSegs.working - pauseOffset.working),
+    away: Math.max(0, rawSeg.away - baseSegs.away - pauseOffset.away),
+    social: Math.max(0, rawSeg.social - baseSegs.social - pauseOffset.social),
+    absent: Math.max(0, rawSeg.absent - baseSegs.absent - pauseOffset.absent),
   } : rawSeg;
 
   let segs: { working: number; away: number; social: number; absent: number };
