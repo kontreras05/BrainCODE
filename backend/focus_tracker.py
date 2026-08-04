@@ -57,6 +57,9 @@ MODEL_PATH = os.path.join(os.path.dirname(__file__), "face_landmarker.task")
 GESTURE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task"
 GESTURE_MODEL_PATH = os.path.join(os.path.dirname(__file__), "gesture_recognizer.task")
 
+POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
+POSE_MODEL_PATH = os.path.join(os.path.dirname(__file__), "pose_landmarker_lite.task")
+
 def download_models():
     if not os.path.exists(MODEL_PATH):
         print(f"Descargando modelo face_landmarker.task (se hace solo una vez)...")
@@ -64,6 +67,9 @@ def download_models():
     if not os.path.exists(GESTURE_MODEL_PATH):
         print(f"Descargando modelo gesture_recognizer.task (se hace solo una vez)...")
         urllib.request.urlretrieve(GESTURE_MODEL_URL, GESTURE_MODEL_PATH)
+    if not os.path.exists(POSE_MODEL_PATH):
+        print(f"Descargando modelo pose_landmarker_lite.task (se hace solo una vez)...")
+        urllib.request.urlretrieve(POSE_MODEL_URL, POSE_MODEL_PATH)
 
 class FocusTracker:
     def __init__(
@@ -85,6 +91,10 @@ class FocusTracker:
         self.on_state_change = on_state_change
         
         self.is_running = False
+        # Session lifecycle: thread is alive (is_running) but camera only opens
+        # when a session is active. Lets the user pick a camera before start
+        # and frees the device between sessions.
+        self._session_active = False
         self._thread = None
         self._state_lock = threading.Lock()
         self._current_state = FocusState()
@@ -108,6 +118,15 @@ class FocusTracker:
         self._current_focus_streak = 0.0
         self._longest_focus_streak = 0.0
         self._distraction_events = []
+
+        # Per-bucket session time used by the frontend Ring.
+        # Mapping (computed in _update_candidate from confirmed state + active window):
+        #   FOCUSED + Social Media window → social
+        #   FOCUSED + other window        → working
+        #   DISTRACTED                    → away
+        #   NOT_PRESENT                   → absent
+        self._segment_seconds = {"working": 0.0, "away": 0.0, "social": 0.0, "absent": 0.0}
+        self._active_window_category: Optional[str] = None
         
         download_models()
         
@@ -128,9 +147,26 @@ class FocusTracker:
             num_hands=2
         )
         self.gesture_recognizer = vision.GestureRecognizer.create_from_options(options_gesture)
-        
+
+        # --- Pose Landmarker (person presence detection) ---
+        # Lets us distinguish "user stepped away" (NOT_PRESENT) from "user is at
+        # the desk but face is hidden / turned away" (DISTRACTED). Without this,
+        # any face miss flips to absent which produces false absences when the
+        # user just looks down at a notebook or rubs their eyes.
+        base_options_pose = python.BaseOptions(model_asset_path=POSE_MODEL_PATH)
+        options_pose = vision.PoseLandmarkerOptions(
+            base_options=base_options_pose,
+            num_poses=1
+        )
+        self.pose_detector = vision.PoseLandmarker.create_from_options(options_pose)
+
+        # Minimum visibility for pose to count as "person present" — pose model
+        # often returns ghost landmarks with very low visibility scores.
+        self._pose_visibility_threshold = 0.5
+        self._pose_min_visible_landmarks = 3
+
         # --- Concurrency ---
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
         
         self._last_yaw = 0
         self._last_pitch = 0
@@ -178,12 +214,12 @@ class FocusTracker:
         self._gaze_threshold_right = 0.15
         self._gaze_threshold_up = 0.20
         self._gaze_threshold_down = 0.20
-        self._gaze_min_threshold_h = 0.08
-        self._gaze_min_threshold_v = 0.10
+        self._gaze_min_threshold_h = 0.12
+        self._gaze_min_threshold_v = 0.15
 
-        self._head_yaw_threshold = 25
-        self._head_pitch_up_threshold = 20
-        self._head_pitch_down_threshold = 35
+        self._head_yaw_threshold = 30
+        self._head_pitch_up_threshold = 25
+        self._head_pitch_down_threshold = 40
 
         # Calibrated blink threshold (per-user; some users have heavier eyelids)
         self._blink_threshold = 0.5
@@ -202,39 +238,130 @@ class FocusTracker:
         self._gaze_v_history = deque(maxlen=self._gaze_history_size)
         
         # --- Gaze voting system: require N of last M frames off-screen ---
-        self._gaze_vote_window = 8   # look at last M frames
-        self._gaze_vote_threshold = 5  # require N frames to be "off"
+        self._gaze_vote_window = 15   # look at last M frames
+        self._gaze_vote_threshold = 10  # require N frames to be "off"
         self._gaze_vote_buffer = deque(maxlen=self._gaze_vote_window)
 
+    @staticmethod
+    def _get_camera_names_windows() -> list:
+        """Read DirectShow video-input device names in DirectShow enumeration order.
+
+        Uses the registry key that Windows populates when DirectShow first enumerates
+        cameras (same source as cv2.VideoCapture with CAP_DSHOW), so the order matches
+        the OpenCV index exactly. WMI/PnPEntity order differs and causes mismatches.
+        Tries HKCU first, then HKLM. Returns [] silently if the key isn't present —
+        callers fall back to generic "Cámara N" labels.
+        """
+        import winreg
+        # DirectShow Video Input Device Category GUID
+        DSHOW_VIDS = r"Software\Microsoft\ActiveMovie\devenum\{860BB310-5D01-11D0-BD3B-00A0C911CE86}"
+        for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            try:
+                key = winreg.OpenKey(hive, DSHOW_VIDS)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                continue
+            names = []
+            try:
+                i = 0
+                while True:
+                    try:
+                        subkey_name = winreg.EnumKey(key, i)
+                        with winreg.OpenKey(key, subkey_name) as sub:
+                            try:
+                                value, _ = winreg.QueryValueEx(sub, "FriendlyName")
+                                if isinstance(value, bytes):
+                                    value = value.decode("utf-16-le").rstrip("\x00")
+                                names.append(str(value))
+                            except FileNotFoundError:
+                                pass
+                        i += 1
+                    except OSError:
+                        break
+            finally:
+                winreg.CloseKey(key)
+            if names:
+                return names
+        return []
+
+    @staticmethod
+    def list_cameras(max_index: int = 5) -> list:
+        """Probe camera indices 0..max_index-1 and return available cameras.
+        Uses DirectShow (CAP_DSHOW) on Windows for near-instant probing."""
+        import platform
+        is_windows = platform.system() == "Windows"
+        backend = cv2.CAP_DSHOW if is_windows else cv2.CAP_ANY
+
+        device_names = FocusTracker._get_camera_names_windows() if is_windows else []
+
+        available = []
+        for idx in range(max_index):
+            cap = cv2.VideoCapture(idx, backend)
+            if cap.isOpened():
+                name = device_names[idx] if idx < len(device_names) else f"Cámara {idx}"
+                available.append({"index": idx, "name": name})
+                cap.release()
+        return available
+
     def start(self):
+        """Start the tracking thread without opening the camera. The thread
+        idles until `start_session()` is called, which lets the user pick a
+        camera in the UI before any device is grabbed."""
         if self.is_running:
             return
         self.is_running = True
-        self._score = 100.0
-        self._current_focus_streak = 0.0
-        
-        # Reiniciar contadores de tiempo
-        now = time.time()
-        self._last_score_update_time = now
-        self._last_stats_update_time = now
-        self._candidate_since = now
-        
-        # Reset calibration for new session
-        self.calibration_phase = CalibrationPhase.WAITING_TO_START
-        self._calib_samples_center_gaze.clear()
-        self._calib_samples_center_head.clear()
-        self._calib_samples_center_blink.clear()
-        self._calib_samples_center_face_ratio.clear()
-        self._face_ratio_baseline = 0.0
-        self._drift_warning_since = None
-        for buf in self._calib_samples_corners.values():
-            buf.clear()
-        self._gaze_h_history.clear()
-        self._gaze_v_history.clear()
-        self._gaze_vote_buffer.clear()
-        
         self._thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self._thread.start()
+
+    def start_session(self, camera_index: Optional[int] = None):
+        """Activate a session: reset state, set camera index, signal the loop
+        to open the camera. Idempotent if a session is already active."""
+        if camera_index is not None:
+            self.camera_index = int(camera_index)
+        self.reset_session()
+        self._session_active = True
+
+    def stop_session(self) -> Dict:
+        """End the session: signal the loop to release the camera and return
+        a stats snapshot. The thread keeps running for the next session."""
+        self._session_active = False
+        return self.get_session_stats()
+
+    def reset_session(self):
+        """Reset session-scoped state (buckets, score, calibration) without
+        stopping the camera/thread. Used by the frontend to start a new
+        session while keeping the tracker alive."""
+        with self._state_lock:
+            now = time.time()
+            self._segment_seconds = {"working": 0.0, "away": 0.0, "social": 0.0, "absent": 0.0}
+            self._score = 100.0
+            self._current_focus_streak = 0.0
+            self._longest_focus_streak = 0.0
+            self._total_focused_time = 0.0
+            self._total_distracted_time = 0.0
+            self._total_absent_time = 0.0
+            self._distraction_events = []
+            self._last_score_update_time = now
+            self._last_stats_update_time = now
+            self._candidate_since = now
+            self.calibration_phase = CalibrationPhase.WAITING_TO_START
+            self._calib_samples_center_gaze.clear()
+            self._calib_samples_center_head.clear()
+            self._calib_samples_center_blink.clear()
+            self._calib_samples_center_face_ratio.clear()
+            self._face_ratio_baseline = 0.0
+            self._drift_warning_since = None
+            for buf in self._calib_samples_corners.values():
+                buf.clear()
+            self._gaze_h_history.clear()
+            self._gaze_v_history.clear()
+            self._gaze_vote_buffer.clear()
+
+    def set_active_window_category(self, category: Optional[str]):
+        """Called from window_monitor; thread-safe."""
+        with self._state_lock:
+            self._active_window_category = category
 
     def start_calibration(self):
         """Manually trigger the calibration process."""
@@ -313,23 +440,104 @@ class FocusTracker:
 
     def end_session(self) -> Dict:
         self.stop()
+        return self.get_session_stats()
+
+    def get_session_stats(self) -> Dict:
+        """Snapshot of session stats without stopping the tracker."""
+        with self._state_lock:
+            total_seg_time = sum(self._segment_seconds.values())
+            if total_seg_time > 0:
+                final_score = (self._segment_seconds["working"] / total_seg_time) * 100.0
+            else:
+                final_score = float(self._score)
+
+            return {
+                "final_score": final_score,
+                "total_focused_time": int(self._total_focused_time),
+                "total_distracted_time": int(self._total_distracted_time),
+                "total_absent_time": int(self._total_absent_time),
+                "longest_focus_streak": int(self._longest_focus_streak),
+                "distraction_events": list(self._distraction_events),
+                "segments_seconds": dict(self._segment_seconds),
+            }
+
+    def get_segment_seconds(self) -> Dict[str, float]:
+        with self._state_lock:
+            return dict(self._segment_seconds)
+
+    def get_live_state(self) -> Dict:
+        """Serializable snapshot consumed by the React frontend (~3 Hz polling)."""
+        with self._state_lock:
+            cs = self._current_state
+            seg = dict(self._segment_seconds)
+            cat = self._active_window_category
+            confirmed = self._current_confirmed_state
+            score = float(self._score)
+            reason = cs.distraction_reason
+
+        if confirmed == ConcentrationState.NOT_PRESENT:
+            bc_state = "absent"
+        elif confirmed == ConcentrationState.DISTRACTED:
+            bc_state = "away"
+        elif cat == "Social Media":
+            bc_state = "social"
+        else:
+            bc_state = "working"
+
         return {
-            "final_score": float(self._score),
-            "total_focused_time": int(self._total_focused_time),
-            "total_distracted_time": int(self._total_distracted_time),
-            "total_absent_time": int(self._total_absent_time),
-            "longest_focus_streak": int(self._longest_focus_streak),
-            "distraction_events": self._distraction_events
+            "bc_state": bc_state,
+            "raw_state": confirmed.value,
+            "distraction_reason": reason,
+            "score": score,
+            "calibration": {
+                "phase": self.calibration_phase.name,
+                "progress": float(self.calibration_progress),
+                "is_calibrated": bool(self.is_fully_calibrated),
+                "recalibration_suggested": bool(self.recalibration_suggested),
+            },
+            "environment": self.environment_status,
+            "segments_seconds": seg,
+            "active_window_category": cat,
         }
 
+    def _open_camera(self) -> Optional[cv2.VideoCapture]:
+        """Open the camera using DirectShow on Windows for fast startup."""
+        import platform
+        backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
+        cap = cv2.VideoCapture(self.camera_index, backend)
+        if not cap.isOpened():
+            cap.release()
+            return None
+        return cap
+
     def _tracking_loop(self):
-        cap = cv2.VideoCapture(self.camera_index)
-        
-        while self.is_running and cap.isOpened():
+        cap: Optional[cv2.VideoCapture] = None
+
+        while self.is_running:
+            # Lazy camera: only hold the device while a session is active.
+            if not self._session_active:
+                if cap is not None:
+                    cap.release()
+                    cap = None
+                with self._state_lock:
+                    self._last_frame = None
+                time.sleep(0.1)
+                continue
+
+            if cap is None:
+                cap = self._open_camera()
+                if cap is None:
+                    # Couldn't open the chosen camera; surface it as not-present
+                    self._update_candidate(ConcentrationState.NOT_PRESENT, "camera_error", {}, None)
+                    time.sleep(0.5)
+                    continue
+
             success, image = cap.read()
             if not success:
+                cap.release()
+                cap = None
                 self._update_candidate(ConcentrationState.NOT_PRESENT, "camera_error", {}, None)
-                time.sleep(0.1)
+                time.sleep(0.5)
                 continue
 
             img_h, img_w, _ = image.shape
@@ -338,12 +546,21 @@ class FocusTracker:
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
             
             # --- PARALLEL RECOGNITION ---
-            # Run both heavy ML models in parallel to prevent frame rate drops (race condition fix)
-            future_face = self._executor.submit(self.detector.detect, mp_image)
-            future_gesture = self._executor.submit(self.gesture_recognizer.recognize, mp_image)
+            # Run all heavy ML models in parallel to prevent frame rate drops (race condition fix)
+            # Create separate mp.Image instances for each thread to prevent MediaPipe packet ownership crashes
+            img_face = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
+            img_gesture = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
+            img_pose = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
             
+            future_face = self._executor.submit(self.detector.detect, img_face)
+            future_gesture = self._executor.submit(self.gesture_recognizer.recognize, img_gesture)
+            future_pose = self._executor.submit(self.pose_detector.detect, img_pose)
+
             detection_result = future_face.result()
             gesture_result = future_gesture.result()
+            pose_result = future_pose.result()
+
+            person_present = self._is_person_present(pose_result)
             
             # --- GESTURE PROCESSING ---
             current_time = time.time()
@@ -358,9 +575,18 @@ class FocusTracker:
                 self._detected_gestures.clear()
             
             # PASO 1 - Rostro detectado
+            # If face is missing but a body/torso is visible, the user is at the
+            # desk with their face hidden (looking down, covering, turned around).
+            # That's a distraction, not an absence.
             if not detection_result.face_landmarks:
-                self._update_candidate(ConcentrationState.NOT_PRESENT, "no_face_detected", raw_data, image)
+                raw_data["person_present"] = person_present
+                if person_present:
+                    self._update_candidate(ConcentrationState.DISTRACTED, "face_hidden", raw_data, image)
+                else:
+                    self._update_candidate(ConcentrationState.NOT_PRESENT, "no_person_detected", raw_data, image)
                 continue
+
+            raw_data["person_present"] = True
                 
             face_landmarks = detection_result.face_landmarks[0]
             
@@ -514,8 +740,27 @@ class FocusTracker:
                 
             self._update_candidate(candidate, reason, raw_data, image)
             time.sleep(0.03)
-            
-        cap.release()
+
+        if cap is not None:
+            cap.release()
+
+    def _is_person_present(self, pose_result) -> bool:
+        """True if the pose landmarker returns enough confidently-visible landmarks.
+
+        Pose Landmarker can return landmarks with very low visibility scores even
+        when there is no person, so we require N landmarks above a visibility
+        threshold rather than just `pose_landmarks` being non-empty.
+        """
+        if not pose_result or not pose_result.pose_landmarks:
+            return False
+        landmarks = pose_result.pose_landmarks[0]
+        if not landmarks:
+            return False
+        visible = sum(
+            1 for lm in landmarks
+            if getattr(lm, "visibility", 1.0) >= self._pose_visibility_threshold
+        )
+        return visible >= self._pose_min_visible_landmarks
 
     def _process_gestures(self, result, current_time):
         num_hands = len(result.hand_landmarks) if result.hand_landmarks else 0
@@ -641,13 +886,13 @@ class FocusTracker:
         down_devs = self._reject_outliers_iqr([s[1] - self._gaze_baseline_v for s in (bl + br)])
 
         self._gaze_threshold_left = max(self._gaze_min_threshold_h,
-                                        float(np.percentile(left_devs, 95))) if left_devs else self._gaze_min_threshold_h
+                                        float(np.percentile(left_devs, 95)) * 1.2) if left_devs else self._gaze_min_threshold_h
         self._gaze_threshold_right = max(self._gaze_min_threshold_h,
-                                         float(np.percentile(right_devs, 95))) if right_devs else self._gaze_min_threshold_h
+                                         float(np.percentile(right_devs, 95)) * 1.2) if right_devs else self._gaze_min_threshold_h
         self._gaze_threshold_up = max(self._gaze_min_threshold_v,
-                                      float(np.percentile(up_devs, 95))) if up_devs else self._gaze_min_threshold_v
+                                      float(np.percentile(up_devs, 95)) * 1.2) if up_devs else self._gaze_min_threshold_v
         self._gaze_threshold_down = max(self._gaze_min_threshold_v,
-                                        float(np.percentile(down_devs, 95))) if down_devs else self._gaze_min_threshold_v
+                                        float(np.percentile(down_devs, 95)) * 1.2) if down_devs else self._gaze_min_threshold_v
 
         print(f"[CALIB] Asymmetric thresholds — "
               f"L={self._gaze_threshold_left:.3f} R={self._gaze_threshold_right:.3f} "
@@ -732,17 +977,30 @@ class FocusTracker:
         delta_t = current_time - self._last_stats_update_time
         self._last_stats_update_time = current_time
         
+        # Only accumulate session-scoped buckets after calibration is done,
+        # so the Ring starts truly empty when the user begins the Pomodoro.
+        accumulate = self.calibration_phase == CalibrationPhase.CALIBRATED
+
         if self._current_confirmed_state == ConcentrationState.FOCUSED:
             self._total_focused_time += delta_t
             self._current_focus_streak += delta_t
             if self._current_focus_streak > self._longest_focus_streak:
                 self._longest_focus_streak = self._current_focus_streak
+            if accumulate:
+                if self._active_window_category == "Social Media":
+                    self._segment_seconds["social"] += delta_t
+                else:
+                    self._segment_seconds["working"] += delta_t
         else:
             self._current_focus_streak = 0.0
             if self._current_confirmed_state == ConcentrationState.DISTRACTED:
                 self._total_distracted_time += delta_t
+                if accumulate:
+                    self._segment_seconds["away"] += delta_t
             elif self._current_confirmed_state == ConcentrationState.NOT_PRESENT:
                 self._total_absent_time += delta_t
+                if accumulate:
+                    self._segment_seconds["absent"] += delta_t
         
         # Scoring pomodoro manager
         score_delta_t = current_time - self._last_score_update_time
