@@ -1,8 +1,13 @@
 import { useState } from "react";
 import { CFG } from "./state";
+import { useBackendData } from "./hooks";
+import { PullToRefresh } from "./PullToRefresh";
 
 export function MetricsView() {
   const [period, setPeriod] = useState("Hoy");
+  // Las tarjetas siguen siendo datos de ejemplo; el gesto re-consulta el backend
+  // para que al conectarlas ya estén frescas.
+  const { refresh } = useBackendData();
 
   const stats: Array<{ label: string; val: string; delta: string; up: boolean | null; color: string; pct: number }> = [
     { label: "Tiempo activo",  val: "4h 32m", delta: "+12%", up: true,  color: CFG.working.hex, pct: 0.72 },
@@ -24,7 +29,7 @@ export function MetricsView() {
   ];
 
   return (
-    <div className="bc-metrics">
+    <PullToRefresh className="bc-metrics" onRefresh={refresh}>
       <div className="bc-mhdr">
         <div>
           <div className="bc-mhdr-title">Productividad</div>
@@ -114,6 +119,6 @@ export function MetricsView() {
           ))}
         </div>
       </div>
-    </div>
+    </PullToRefresh>
   );
 }

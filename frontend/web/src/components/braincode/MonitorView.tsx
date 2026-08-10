@@ -68,7 +68,7 @@ export function MonitorView({ camOn, setCamOn, camOpen, setCamOpen }: MonitorVie
   const sessionActive = (pom.config !== null || pendingConfig !== null) && !pom.completed;
   const resetKey = pom.config ? `${pom.done}-${pom.isBreak}` : undefined;
   const { state, segs, segSecs, calibration, environment, score: liveScore } = useFocusTracker(sessionActive, !focusActive, normMode, resetKey);
-  const sessions = useSessions();
+  const { sessions } = useSessions();
   const { score: backendScore } = useBackendData();
 
   // Freeze the last live segments at completion so the ring summary is stable.
