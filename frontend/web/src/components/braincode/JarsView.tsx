@@ -3,6 +3,7 @@ import { BrainMascot } from "./BrainMascot";
 import { JarSVG } from "./JarSVG";
 import { CFG, type SessionRecord } from "./state";
 import { useSessions } from "./hooks";
+import { PullToRefresh } from "./PullToRefresh";
 
 function localDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -74,7 +75,7 @@ function DayJar({ isoDate, sessions }: { isoDate: string; sessions: SessionRecor
 }
 
 export function JarsView() {
-  const sessions = useSessions();
+  const { sessions, refresh } = useSessions();
   const dayMap = useMemo(() => groupByDay(sessions), [sessions]);
   const days = [...dayMap.entries()];
 
@@ -82,7 +83,7 @@ export function JarsView() {
   for (let i = 0; i < days.length; i += 4) rows.push(days.slice(i, i + 4));
 
   return (
-    <div className="bc-jars-view">
+    <PullToRefresh className="bc-jars-view" onRefresh={refresh}>
       <div className="bc-shelf-header">
         <div className="bc-mhdr-title" style={{ fontSize: 16 }}>Tarros de sesión</div>
         <div className="bc-mhdr-sub">
@@ -104,6 +105,6 @@ export function JarsView() {
           </Fragment>
         ))
       )}
-    </div>
+    </PullToRefresh>
   );
 }

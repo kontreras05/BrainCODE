@@ -38,32 +38,34 @@ export function useBackendData() {
   const [metrics, setMetrics] = useState<any>(null);
   const [hourly, setHourly] = useState<any[]>([]);
   const [score, setScore] = useState({ pct: 0, mins: 0 });
+  const aliveRef = useRef(true);
 
-  useEffect(() => {
-    let alive = true;
-    async function load() {
-      const api = await waitForPyApi();
-      if (!api || !alive) return;
-      try {
-        const today = await api.get_today_metrics();
-        if (alive && today && today.has_data) {
-          setMetrics(today);
-          setScore({ pct: today.score_pct, mins: today.active_minutes });
-        }
-        const hb = await api.get_hourly_breakdown();
-        if (alive && hb && hb.length) {
-          setHourly(hb);
-        }
-      } catch (err) {
-        console.warn('API error', err);
+  const load = useCallback(async () => {
+    const api = await waitForPyApi();
+    if (!api || !aliveRef.current) return;
+    try {
+      const today = await api.get_today_metrics();
+      if (aliveRef.current && today && today.has_data) {
+        setMetrics(today);
+        setScore({ pct: today.score_pct, mins: today.active_minutes });
       }
+      const hb = await api.get_hourly_breakdown();
+      if (aliveRef.current && hb && hb.length) {
+        setHourly(hb);
+      }
+    } catch (err) {
+      console.warn('API error', err);
     }
-    load();
-    const iv = setInterval(load, 15000);
-    return () => { alive = false; clearInterval(iv); };
   }, []);
 
-  return { metrics, hourly, score };
+  useEffect(() => {
+    aliveRef.current = true;
+    load();
+    const iv = setInterval(load, 15000);
+    return () => { aliveRef.current = false; clearInterval(iv); };
+  }, [load]);
+
+  return { metrics, hourly, score, refresh: load };
 }
 
 // ── Live FocusTracker ───────────────────────────────────────────
@@ -262,21 +264,21 @@ export function useFocusControl() {
 
 export function useSessions() {
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  const aliveRef = useRef(true);
+
+  const load = useCallback(async () => {
+    const api = await waitForPyApi();
+    if (!api || !aliveRef.current) return;
+    try {
+      const rows = await api.list_sessions();
+      if (aliveRef.current && Array.isArray(rows)) setSessions(rows);
+    } catch (err) {
+      console.warn("[useSessions] error", err);
+    }
+  }, []);
 
   useEffect(() => {
-    let alive = true;
-
-    async function load() {
-      const api = await waitForPyApi();
-      if (!api || !alive) return;
-      try {
-        const rows = await api.list_sessions();
-        if (alive && Array.isArray(rows)) setSessions(rows);
-      } catch (err) {
-        console.warn("[useSessions] error", err);
-      }
-    }
-
+    aliveRef.current = true;
     load();
 
     function onVisibility() {
@@ -284,12 +286,12 @@ export function useSessions() {
     }
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
-      alive = false;
+      aliveRef.current = false;
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, []);
+  }, [load]);
 
-  return sessions;
+  return { sessions, refresh: load };
 }
 
 // ── Pomodoro (unchanged) ────────────────────────────────────────
